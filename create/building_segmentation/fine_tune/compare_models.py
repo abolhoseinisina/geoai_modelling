@@ -21,7 +21,7 @@ MASK_THRESH = 0.5
 NMS_IOU = 0.4
 MIN_AREA_M2 = 10.0  # drop tiny fragments after polygonisation
 MAX_AREA_M2 = 1500.0  # drop absurd blobs (whole fields) that are clearly not buildings
-DEVICE = "cpu"
+DEVICE = "auto"
 OVERVIEW_SIZE = 1800  # longest side of the comparison PNG
 MODELS = [("pretrained", PRETRAINED_PATH), ("finetuned", FINETUNED_PATH)]
 

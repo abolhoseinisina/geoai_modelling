@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from BuildingTileDataset import BuildingTileDataset
 from common import FINETUNED_PATH, PRETRAINED_PATH, TILE_INDEX, buildModel, freezeBackbone, freezeBatchnorm, getDevice
 
-EPOCHS = 2
+EPOCHS = 1
 BATCH_SIZE = 2
 LEARNING_RATE = 0.002  # SGD, scaled down from the 0.02/batch-16 reference recipe
 MOMENTUM = 0.9
@@ -15,7 +15,7 @@ WEIGHT_DECAY = 5e-4
 GRAD_CLIP_NORM = 10.0
 VAL_FRACTION = 0.15
 SEED = 42
-DEVICE = "cpu"
+DEVICE = "auto"
 TRAINABLE_BACKBONE_STAGES = 3
 NUM_WORKERS = 0
 
@@ -76,6 +76,7 @@ def getModelPerformance(model, loader, device, score_thresh=0.5, iou_thresh=0.5)
     return recall, precision
 
 def execute() -> None:
+    print('Start fine-tuning')
     if not TILE_INDEX.exists():
         raise SystemExit(f"{TILE_INDEX} is missing - run generate_tiles.py first.")
 
@@ -92,7 +93,7 @@ def execute() -> None:
     val_loader = DataLoader(BuildingTileDataset(val_records, augment=False), batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate, num_workers=NUM_WORKERS)
 
     device = getDevice(DEVICE)
-    print(f"using device: {device}")
+    print(f"Device: {device}")
 
     model = buildModel(weights_path=PRETRAINED_PATH)
     freezeBackbone(model, TRAINABLE_BACKBONE_STAGES)
@@ -104,8 +105,9 @@ def execute() -> None:
     total_steps = EPOCHS * max(len(train_loader), 1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, getLRSchedule(total_steps, warmup_steps=min(len(train_loader), 100)))
 
+    print('Get pretrained model performance')
     baseline = getModelPerformance(model, val_loader, device)
-    print(f"pretrained baseline: recall {baseline[0]:.3f}  precision {baseline[1]:.3f}")
+    print(f" recall: {baseline[0]:.3f} - precision: {baseline[1]:.3f}")
     
     best_val = math.inf
     epoch_tqdm = tqdm(range(EPOCHS), desc='Fine-tuning', ncols=100)
@@ -144,9 +146,9 @@ def execute() -> None:
 
     model.load_state_dict(torch.load(FINETUNED_PATH, map_location=device, weights_only=True))
     final = getModelPerformance(model, val_loader, device)
-    print(f"\nbaseline    : recall {baseline[0]:.3f}  precision {baseline[1]:.3f}")
-    print(f"fine-tuned  : recall {final[0]:.3f}  precision {final[1]:.3f}")
-    print(f"weights     : {FINETUNED_PATH}")
+    print('Get fine-tuned model performance')
+    print(f'recall: {final[0]:.3f} - precision: {final[1]:.3f}')
+    print(f'weights     : {FINETUNED_PATH}')
     print(f"Fine-tuned model saved {FINETUNED_PATH.name} (best val {best_val:.4f})")
 
 if __name__ == "__main__":

@@ -9,8 +9,8 @@ HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE.parent.parent.parent / "training_dataset/building_segmentation_202608"
 BUILDINGS_GEOJSON = DATA_DIR / "training_buildings.geojson"
 PRETRAINED_PATH = HERE.parent.parent.parent / "models/building_segmentation/building_footprints_usa.pth"
-FINETUNED_PATH = HERE / "ouput/finetuned_building_footprints_usa.pth"
-ONNX_PATH = HERE / "ouput/finetuned_building_footprints_usa.onnx"
+FINETUNED_PATH = HERE / "output/finetuned_building_footprints_usa.pth"
+ONNX_PATH = HERE / "output/finetuned_building_footprints_usa.onnx"
 
 TILES_DIR = HERE / "tiles"
 TILE_INDEX = TILES_DIR / "index.json"

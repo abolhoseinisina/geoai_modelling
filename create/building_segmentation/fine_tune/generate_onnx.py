@@ -37,7 +37,8 @@ def verify(model) -> None:
 
 def execute() -> None:
     if WEIGHTS_PATH is PRETRAINED_PATH:
-        print(f"{FINETUNED_PATH.name} not found - exporting the pretrained weights instead")
+        print(f"{FINETUNED_PATH.name} not found")
+        exit()
     
     print(f"loading {WEIGHTS_PATH.name}")
     model = buildModel(weights_path=WEIGHTS_PATH)
