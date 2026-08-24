@@ -11,6 +11,7 @@ from rasterio.windows import Window
 from shapely.geometry import Polygon
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
+from config import RunConfig, parseConfig
 from common import DATA_DIR, FINETUNED_PATH, HERE, PRETRAINED_PATH, TILE_SIZE, buildModel, getRasterResolution, getDevice, getSamplingScales, getWindowOrigins
 
 TIF_PATH = DATA_DIR / "Winnipeg_SU_2025_crop_3.tif"
@@ -21,7 +22,6 @@ MASK_THRESH = 0.5
 NMS_IOU = 0.4
 MIN_AREA_M2 = 10.0  # drop tiny fragments after polygonisation
 MAX_AREA_M2 = 1500.0  # drop absurd blobs (whole fields) that are clearly not buildings
-DEVICE = "auto"
 OVERVIEW_SIZE = 1800  # longest side of the comparison PNG
 MODELS = [("pretrained", PRETRAINED_PATH), ("finetuned", FINETUNED_PATH)]
 
@@ -190,7 +190,7 @@ def drawOverview(src, frames: dict[str, gpd.GeoDataFrame], out_path: Path) -> No
     print(f"wrote {out_path}")
 
 
-def execute() -> None:
+def execute(config: RunConfig) -> None:
     if not TIF_PATH.exists():
         raise SystemExit(f"missing imagery: {TIF_PATH}")
     
@@ -199,10 +199,12 @@ def execute() -> None:
             raise SystemExit(f"missing weights: {path}")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    device = getDevice(DEVICE)
-    print(f"device={device}  tile={TILE_SIZE}  score>={SCORE_THRESH}")
-    print(f"imagery={TIF_PATH}")
+    device = getDevice(config.device)
+    print(f"config={config.name}  device={device}  tile={TILE_SIZE}  score>={SCORE_THRESH}")
+    if device.type == "cuda":
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
 
+    print(f"imagery={TIF_PATH}")
     frames: dict[str, gpd.GeoDataFrame] = {}
     with rasterio.open(TIF_PATH) as src:
         print(f"size={src.width}x{src.height}  crs={src.crs}  res={src.res}")
@@ -221,6 +223,9 @@ def execute() -> None:
             del model
             if device.type == "mps":
                 torch.mps.empty_cache()
+            
+            elif device.type == "cuda":
+                torch.cuda.empty_cache()
 
         drawOverview(src, frames, OUT_DIR / "comparison_overview.png")
 
@@ -230,4 +235,4 @@ def execute() -> None:
     print(f"outputs in {OUT_DIR}")
 
 if __name__ == "__main__":
-    execute()
+    execute(parseConfig())

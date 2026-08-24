@@ -54,14 +54,27 @@ def getWindowOrigins(total: int, span: float, step: float) -> list[float]:
     
     return origins
 
-def getDevice(preference: str = "cpu") -> torch.device:
-    if preference != "auto":
-        return torch.device(preference)
-    
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    
-    return torch.device("cpu")
+def getDevice(preference: str = "auto") -> torch.device:
+    if preference == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+
+        return torch.device("cpu")
+
+    if preference == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("config requested CUDA, but torch.cuda.is_available() is False")
+
+    if preference == "mps":
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+            
+        print("MPS is not available; falling back to CPU")
+        return torch.device("cpu")
+
+    return torch.device(preference)
 
 def loadAndUnwrapStateDict(path: Path) -> dict[str, torch.Tensor]:
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)

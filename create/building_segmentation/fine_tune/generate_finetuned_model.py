@@ -4,20 +4,16 @@ import torch
 import random
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from config import RunConfig, parseConfig
 from BuildingTileDataset import BuildingTileDataset
 from common import FINETUNED_PATH, PRETRAINED_PATH, TILE_INDEX, buildModel, freezeBackbone, freezeBatchnorm, getDevice
 
-EPOCHS = 1
-BATCH_SIZE = 2
-LEARNING_RATE = 0.002  # SGD, scaled down from the 0.02/batch-16 reference recipe
 MOMENTUM = 0.9
 WEIGHT_DECAY = 5e-4
 GRAD_CLIP_NORM = 10.0
 VAL_FRACTION = 0.15
 SEED = 42
-DEVICE = "auto"
 TRAINABLE_BACKBONE_STAGES = 3
-NUM_WORKERS = 0
 
 def splitTrainingValidationRecords(records: list[dict]) -> tuple[list[dict], list[dict]]:
     shuffled = list(records)
@@ -75,8 +71,8 @@ def getModelPerformance(model, loader, device, score_thresh=0.5, iou_thresh=0.5)
     precision = true_positives / max(true_positives + false_positives, 1)
     return recall, precision
 
-def execute() -> None:
-    print('Start fine-tuning')
+def execute(config: RunConfig) -> None:
+    print(f"Start fine-tuning ({config.name})")
     if not TILE_INDEX.exists():
         raise SystemExit(f"{TILE_INDEX} is missing - run generate_tiles.py first.")
 
@@ -88,12 +84,19 @@ def execute() -> None:
     train_neg = sum(1 for r in train_records if not r["polygons"])
     val_neg = sum(1 for r in val_records if not r["polygons"])
     print(f"{len(train_records)} training tiles ({train_neg} empty), {len(val_records)} validation tiles ({val_neg} empty)")
-    
-    train_loader = DataLoader(BuildingTileDataset(train_records, augment=True), batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate, num_workers=NUM_WORKERS)
-    val_loader = DataLoader(BuildingTileDataset(val_records, augment=False), batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate, num_workers=NUM_WORKERS)
 
-    device = getDevice(DEVICE)
-    print(f"Device: {device}")
+    loader_kwargs = dict(batch_size=config.batch_size, collate_fn=collate, num_workers=config.num_workers, pin_memory=config.pin_memory)
+    if config.num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+
+    train_loader = DataLoader(BuildingTileDataset(train_records, augment=True), shuffle=True, **loader_kwargs)
+    val_loader = DataLoader(BuildingTileDataset(val_records, augment=False), shuffle=False, **loader_kwargs)
+
+    device = getDevice(config.device)
+    print(f"Device: {device}  batch={config.batch_size}  epochs={config.epochs}  lr={config.learning_rate}")
+    if device.type == "cuda":
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        torch.backends.cudnn.benchmark = True
 
     model = buildModel(weights_path=PRETRAINED_PATH)
     freezeBackbone(model, TRAINABLE_BACKBONE_STAGES)
@@ -101,8 +104,8 @@ def execute() -> None:
     model.to(device)
 
     parameters = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.SGD(parameters, lr=LEARNING_RATE, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
-    total_steps = EPOCHS * max(len(train_loader), 1)
+    optimizer = torch.optim.SGD(parameters, lr=config.learning_rate, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
+    total_steps = config.epochs * max(len(train_loader), 1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, getLRSchedule(total_steps, warmup_steps=min(len(train_loader), 100)))
 
     print('Get pretrained model performance')
@@ -110,7 +113,8 @@ def execute() -> None:
     print(f" recall: {baseline[0]:.3f} - precision: {baseline[1]:.3f}")
     
     best_val = math.inf
-    epoch_tqdm = tqdm(range(EPOCHS), desc='Fine-tuning', ncols=100)
+    FINETUNED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    epoch_tqdm = tqdm(range(config.epochs), desc='Fine-tuning', ncols=100)
     for _ in epoch_tqdm:
         model.train()
         freezeBatchnorm(model)
@@ -152,4 +156,4 @@ def execute() -> None:
     print(f"Fine-tuned model saved {FINETUNED_PATH.name} (best val {best_val:.4f})")
 
 if __name__ == "__main__":
-    execute()
+    execute(parseConfig())
