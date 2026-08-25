@@ -1,7 +1,10 @@
 import os
 import boto3
 import zipfile
+from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError, ClientError
+
+load_dotenv()
 
 S3_BUCKET = 'fm-ca-assets'
 S3_PREFIX = 'geoai'
