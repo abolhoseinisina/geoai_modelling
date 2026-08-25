@@ -7,7 +7,7 @@ from botocore.exceptions import NoCredentialsError, ClientError
 load_dotenv()
 
 S3_BUCKET = 'fm-ca-assets'
-S3_PREFIX = 'geoai'
+S3_PREFIX = 'geoai/training_datasets'
 ZIP_FILENAMES = ['building_segmentation_202608.zip']
 
 def downloadFromS3(zip_filename, zip_path):
