@@ -1,12 +1,16 @@
+import time
 import json
 import math
 import torch
 import random
+import logging 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from config import RunConfig, parseConfig
 from BuildingTileDataset import BuildingTileDataset
 from common import FINETUNED_PATH, PRETRAINED_PATH, TILE_INDEX, buildModel, freezeBackbone, freezeBatchnorm, getDevice
+
+logging.basicConfig(filename="finetune_log.log", filemode="w", format="%(asctime)s - %(message)s", level=logging.WARNING)
 
 MOMENTUM = 0.9
 WEIGHT_DECAY = 5e-4
@@ -143,6 +147,10 @@ def execute(config: RunConfig) -> None:
         train_loss = running / max(batches, 1)
         val_losses = getValidationLoss(model, val_loader, device)
         val_loss = sum(val_losses.values())
+        
+        log_line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}, epoch {epoch_tqdm.n + 1}, train {train_loss:.4f}, val {val_loss:.4f}"
+        logging.warning(log_line)
+   
         epoch_tqdm.set_postfix_str(f"train {train_loss:.4f}  val {val_loss:.4f}")
         if val_loss < best_val:
             best_val = val_loss
@@ -151,9 +159,8 @@ def execute(config: RunConfig) -> None:
     model.load_state_dict(torch.load(FINETUNED_PATH, map_location=device, weights_only=True))
     final = getModelPerformance(model, val_loader, device)
     print('Get fine-tuned model performance')
-    print(f'recall: {final[0]:.3f} - precision: {final[1]:.3f}')
-    print(f'weights     : {FINETUNED_PATH}')
-    print(f"Fine-tuned model saved {FINETUNED_PATH.name} (best val {best_val:.4f})")
+    print(f' recall: {final[0]:.3f} - precision: {final[1]:.3f}')
+    print(f'Fine-tuned model saved "{FINETUNED_PATH.name}" (best val {best_val:.4f})')
 
 if __name__ == "__main__":
     execute(parseConfig())
