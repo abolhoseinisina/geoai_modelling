@@ -148,7 +148,7 @@ def execute(config: RunConfig) -> None:
         val_losses = getValidationLoss(model, val_loader, device)
         val_loss = sum(val_losses.values())
         
-        log_line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}, epoch {epoch_tqdm.n + 1}, train {train_loss:.4f}, val {val_loss:.4f}"
+        log_line = f"epoch {epoch_tqdm.n + 1}, train {train_loss:.4f}, val {val_loss:.4f}"
         logging.warning(log_line)
    
         epoch_tqdm.set_postfix_str(f"train {train_loss:.4f}  val {val_loss:.4f}")
