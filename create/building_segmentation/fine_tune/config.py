@@ -25,9 +25,9 @@ MAC = RunConfig(
 PC = RunConfig(
     name="pc",
     device="cuda",
-    epochs=20,
-    batch_size=8,
-    learning_rate=0.01,
+    epochs=12,
+    batch_size=4,
+    learning_rate=0.005,
     num_workers=4,
     pin_memory=True,
 )
@@ -50,6 +50,6 @@ def parseConfig() -> RunConfig:
         "--config",
         choices=tuple(CONFIGS),
         default=None,
-        help="mac: laptop smoke test. pc: CUDA training (RTX 4080 Ti). default: pc if CUDA is available, else mac.",
+        help="mac: laptop smoke test. pc: CUDA training. default: pc if CUDA is available, else mac.",
     )
     return getConfig(parser.parse_args().config)

@@ -202,7 +202,7 @@ def execute(config: RunConfig) -> None:
     device = getDevice(config.device)
     print(f"config={config.name}  device={device}  tile={TILE_SIZE}  score>={SCORE_THRESH}")
     if device.type == "cuda":
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU: {torch.cuda.get_device_name(device)}")
 
     print(f"imagery={TIF_PATH}")
     frames: dict[str, gpd.GeoDataFrame] = {}

@@ -95,7 +95,7 @@ def execute(config: RunConfig) -> None:
     device = getDevice(config.device)
     print(f"Device: {device}  batch={config.batch_size}  epochs={config.epochs}  lr={config.learning_rate}")
     if device.type == "cuda":
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU: {torch.cuda.get_device_name(device)}")
         torch.backends.cudnn.benchmark = True
 
     model = buildModel(weights_path=PRETRAINED_PATH)
