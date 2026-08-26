@@ -19,7 +19,7 @@ MAC = RunConfig(
     epochs=1,
     batch_size=2,
     imgsz=512,
-    model="yolo11n-seg.pt",
+    model="yolo26n-seg.pt",
     workers=0,
     patience=1,
 )
@@ -30,7 +30,7 @@ PC = RunConfig(
     epochs=80,
     batch_size=8,
     imgsz=512,
-    model="yolo11m-seg.pt",
+    model="yolo26l-seg.pt",
     workers=4,
     patience=20,
 )
