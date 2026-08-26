@@ -224,3 +224,12 @@ __marimo__/
 *.json
 ._*
 *.zip
+*.onnx
+*.pt
+create/building_segmentation/fine-tune/tiles/
+create/building_segmentation/fine-tune/output/
+create/building_segmentation/fine-tune/compare_winnipeg/
+create/building_segmentation/train/yolo/dataset/
+create/building_segmentation/train/yolo/output/
+create/building_segmentation/train/yolo/runs/
+create/building_segmentation/train/yolo/tiles/

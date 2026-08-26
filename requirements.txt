@@ -8,10 +8,12 @@ shapely>=2.0
 pillow>=10.0
 scipy>=1.11
 scikit-image>=0.22
+tqdm>=4.66
 terratorch>=1.2
 einops>=0.7
 onnx>=1.16
 onnxruntime>=1.18
+ultralytics>=8.3
 sqlalchemy==2.0.51
 dotenv==0.9.9
 psycopg2-binary==2.9.12
