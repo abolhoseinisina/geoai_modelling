@@ -22,11 +22,9 @@ def ultralyticsDevice(preference: str):
 
 def execute(config: RunConfig) -> None:
     if not DATA_YAML.exists():
-        raise SystemExit(f"{DATA_YAML} is missing - run generate_data.py first.")
+        raise SystemExit(f"{DATA_YAML.name} is missing - run generate_data.py first.")
 
     device = ultralyticsDevice(config.device)
-    print(f"Train YOLO ({config.name}): model={config.model}  device={device}  epochs={config.epochs}  batch={config.batch_size}  imgsz={config.imgsz}")
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     model = YOLO(config.model)
     model.train(
@@ -45,8 +43,8 @@ def execute(config: RunConfig) -> None:
 
     best = YOLO(str(WEIGHTS_PATH))
     metrics = best.val(data=str(DATA_YAML), imgsz=config.imgsz, device=device, workers=config.workers)
-    print("map", metrics.seg.map, "map50", metrics.seg.map50)
-    print(f"weights: {WEIGHTS_PATH}")
+    print(f' map: {round(metrics.seg.map, 4)}, map50: {round(metrics.seg.map50, 4)}')
+    print(f' weights: {WEIGHTS_PATH.name}')
 
 if __name__ == "__main__":
     execute(parseConfig())
