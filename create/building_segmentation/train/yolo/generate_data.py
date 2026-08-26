@@ -86,17 +86,12 @@ def execute() -> None:
             ]
         )
     )
-    print(f"Wrote {DATA_YAML} ({len(splits['train'])} train, {len(splits['val'])} val)")
+    print(f"Wrote {DATA_YAML.name} ({len(splits['train'])} train, {len(splits['val'])} val)")
 
     labeled = [record for record in splits["train"] if record["polygons"]]
-    sample = rng.choice(labeled)
+    sample = random.choice(labeled)
     stem = Path(sample["image"]).stem
-    writeAlignmentCheck(
-        sample,
-        DATASET_DIR / "images/train" / Path(sample["image"]).name,
-        DATASET_DIR / "labels/train" / f"{stem}.txt",
-        Path(__file__).resolve().parent / "output/yolo_alignment_check.png",
-    )
+    writeAlignmentCheck(sample, DATASET_DIR / "images/train" / Path(sample["image"]).name, DATASET_DIR / "labels/train" / f"{stem}.txt", Path(__file__).resolve().parent / "output/yolo_alignment_check.png")
 
 if __name__ == "__main__":
     execute()
