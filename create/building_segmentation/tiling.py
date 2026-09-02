@@ -45,40 +45,47 @@ def writeAlignmentCheck(tiles_dir: Path, record: dict, output_path: Path) -> Non
     Image.fromarray(overlay).save(output_path)
     print(f'Check "{output_path.name}" ({record["image"]}, {len(record["polygons"])} buildings): the green outlines should sit on roof edges.')
 
-def loadTrainingBuildings() -> gpd.GeoDataFrame:
-    if not BUILDINGS_GEOJSON.exists():
-        raise SystemExit(f"missing footprints: {BUILDINGS_GEOJSON}")
+def loadTrainingBuildings(file_path: str = None) -> gpd.GeoDataFrame:
+    if file_path is None:
+        file_path = BUILDINGS_GEOJSON
 
-    footprints = gpd.read_file(BUILDINGS_GEOJSON)
+    if not file_path.exists():
+        raise SystemExit(f"missing footprints: {file_path}")
+
+    footprints = gpd.read_file(file_path)
     if footprints.crs is None:
-        raise SystemExit(f"{BUILDINGS_GEOJSON.name} has no CRS. Set one explicitly before tiling, otherwise the footprints cannot be placed on the imagery.")
+        raise SystemExit(f"{file_path.name} has no CRS. Set one explicitly before tiling, otherwise the footprints cannot be placed on the imagery.")
 
     if IMAGE_NAME_COLUMN not in footprints.columns:
-        raise SystemExit(f"{BUILDINGS_GEOJSON.name} is missing the '{IMAGE_NAME_COLUMN}' column that maps each building to its source image.")
+        raise SystemExit(f"{file_path.name} is missing the '{IMAGE_NAME_COLUMN}' column that maps each building to its source image.")
 
     footprints = footprints[footprints.geometry.notna() & ~footprints.geometry.is_empty].copy()
     footprints[IMAGE_NAME_COLUMN] = footprints[IMAGE_NAME_COLUMN].astype(str).str.strip()
     footprints = footprints[footprints[IMAGE_NAME_COLUMN].ne("") & footprints[IMAGE_NAME_COLUMN].ne("None")]
     if footprints.empty:
-        raise SystemExit(f"{BUILDINGS_GEOJSON.name} has no usable footprint features.")
+        raise SystemExit(f"{file_path.name} has no usable footprint features.")
 
     return footprints
 
-def getImagePath(image_name: str):
-    image_path = DATA_DIR / f"{image_name}.tif"
+def getImagePath(image_name: str, image_folder: str = None):
+    if image_folder is None:
+        image_folder = DATA_DIR
+    
+    image_path = image_folder / f"{image_name}.tif"
     if image_path.exists():
         return image_path
     
     return None
 
-def pairImagesWithFootprints(buildings: gpd.GeoDataFrame) -> list[tuple]:
+def pairImagesWithFootprints(buildings: gpd.GeoDataFrame, image_folder: str = None) -> list[tuple]:
     pairs: list[tuple] = []
     missing: list[str] = []
     for image_name, subset in buildings.groupby(IMAGE_NAME_COLUMN, sort=True):
-        tif_path = getImagePath(image_name)
+        tif_path = getImagePath(image_name, image_folder)
         if tif_path is None:
             missing.append(image_name)
             continue
+        
         pairs.append((tif_path, subset.reset_index(drop=True)))
 
     if missing:
