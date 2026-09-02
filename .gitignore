@@ -226,6 +226,7 @@ __marimo__/
 *.zip
 *.onnx
 *.pt
+*.qgz
 create/building_segmentation/fine-tune/tiles/
 create/building_segmentation/fine-tune/output/
 create/building_segmentation/fine-tune/compare_winnipeg/
