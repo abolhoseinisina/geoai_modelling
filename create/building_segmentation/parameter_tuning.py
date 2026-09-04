@@ -1,6 +1,7 @@
 import time
 import pandas as pd
 from pathlib import Path
+from device import getDevice
 from tiling import generateTiles, generateDataYML
 from config import parseYOLOConfig, parseFinetuneConfig
 from train.yolo.common import trainYOLOModel, validateYOLOModel
@@ -35,7 +36,8 @@ def drawComparisonChart(results, file_path):
 
 def trainYolo(data_yaml: Path, tile_size: int, output_model_dir: Path):
     config = parseYOLOConfig()
-    model = trainYOLOModel(config.model, data_yaml, config.device, config.epochs, tile_size, config.batch_size, config.workers, config.patience, output_model_dir)
+    device = getDevice(config.device)
+    model = trainYOLOModel(config.model, data_yaml, device, config.epochs, tile_size, config.batch_size, config.workers, config.patience, output_model_dir)
     return model
 
 def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size):
@@ -43,7 +45,8 @@ def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size):
 
 def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, tile_size: int, overlap: int, output_models_dir: Path):
     config = parseFinetuneConfig()
-    model = finetuneMaskRCNN(config.pretrained_model_path, tile_index, tiles_dir, SEED, 0.2, config.batch_size, config.num_workers, config.pin_memory, config.device, config.epochs, config.learning_rate, output_models_dir)
+    device = getDevice(config.device)
+    model = finetuneMaskRCNN(config.pretrained_model_path, tile_index, tiles_dir, SEED, 0.2, config.batch_size, config.num_workers, config.pin_memory, device, config.epochs, config.learning_rate, output_models_dir)
     return model
 
 def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index, tile_size, overlap):
