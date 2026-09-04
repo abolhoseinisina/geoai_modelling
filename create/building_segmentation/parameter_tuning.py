@@ -11,7 +11,6 @@ SEED = 42
 TILE_SIZES = [320, 512, 640, 960]
 OVERLAPS = [0, 32, 64, 128, 192]
 MODEL_TYPES = ['YOLO', 'MASK-RCNN']
-MODEL_TYPES = ['MASK-RCNN']
 
 REPO = Path(__file__).resolve().parent.parent.parent
 TRAINING_IMAGES_DIR = REPO / 'training_dataset/building_segmentation_202608'
