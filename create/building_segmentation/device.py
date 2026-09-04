@@ -36,7 +36,7 @@ def getDevice(preference: str = "auto") -> torch.device:
         
         return torch.device("cpu")
 
-    if preference == "mps":
+    elif preference == "mps":
         if torch.backends.mps.is_available():
             return torch.device("mps")
         
