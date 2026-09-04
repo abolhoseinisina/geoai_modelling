@@ -234,3 +234,5 @@ create/building_segmentation/train/yolo/dataset/
 create/building_segmentation/train/yolo/output/
 create/building_segmentation/train/yolo/runs/
 create/building_segmentation/train/yolo/tiles/
+create/building_segmentation/tiles/*
+create/building_segmentation/output/*
