@@ -286,9 +286,9 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
     model.load_state_dict(torch.load(output_model_path, map_location=device, weights_only=True))
     return output_model_path
 
-def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, config, tile_size, overlap, score_threshold):
+def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, score_threshold):
     model = buildModel(weights_path=model)
-    model.to(config.device).eval()
+    model.to(device).eval()
     
     validation_df = pd.DataFrame(validation_tile_index)
     results = []
@@ -299,7 +299,7 @@ def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, co
             rgb = np.array(Image.open(image_path).convert("RGB"))
             chw = np.transpose(rgb, (2, 0, 1))
             tensor = torch.from_numpy(chw).float().div_(255)
-            result = _applyModel2Tile(model, tensor, config.device, score_threshold)
+            result = _applyModel2Tile(model, tensor, device, score_threshold)
             pixel_polys = []
             for poly_px, score in result:
                 if float(score) < score_threshold:
