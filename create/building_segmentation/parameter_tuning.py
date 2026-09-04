@@ -43,33 +43,33 @@ def trainYolo(data_yaml: Path, tile_size: int, output_model_dir: Path):
 def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size):
     return validateYOLOModel(model, validation_tiles_dir, validation_tile_index, tile_size, 0.5)
 
-def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, tile_size: int, overlap: int, output_models_dir: Path):
+def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, output_models_dir: Path):
     config = parseFinetuneConfig()
     device = getDevice(config.device)
     model = finetuneMaskRCNN(config.pretrained_model_path, tile_index, tiles_dir, SEED, 0.2, config.batch_size, config.num_workers, config.pin_memory, device, config.epochs, config.learning_rate, output_models_dir)
     return model
 
-def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index, tile_size, overlap):
+def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index):
     config = parseFinetuneConfig()
     device = getDevice(config.device)
     results = validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, 0.5)
     return results
 
-def train(model_type, tile_index, tiles_dir, data_file, tile_size, overlap, output_models_dir):
+def train(model_type, tile_index, tiles_dir, data_file, tile_size, output_models_dir):
     if model_type == 'YOLO':
         return trainYolo(data_file, tile_size, output_models_dir)
 
     elif model_type == 'MASK-RCNN':
-        return trainMaskRCNN(tile_index, tiles_dir, tile_size, overlap, output_models_dir)
+        return trainMaskRCNN(tile_index, tiles_dir, output_models_dir)
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
-def validate(model_type, model, validation_tiles_dir, validation_tile_index, tile_size, overlap, gsd_m):
+def validate(model_type, model, validation_tiles_dir, validation_tile_index, tile_size):
     if model_type == 'YOLO':
         return validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size)
 
     elif model_type == 'MASK-RCNN':
-        return validateMaskRCNN(model, validation_tiles_dir, validation_tile_index, tile_size, overlap)
+        return validateMaskRCNN(model, validation_tiles_dir, validation_tile_index)
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
@@ -83,10 +83,10 @@ def main():
             training_data_file = generateDataYML(training_tile_index, TRAINING_TILES_DIR, TRAINING_DATASET_DIR, TRAINING_DATASET_FILE, 0.2, SEED)
             validation_tile_index = generateTiles(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE, tile_size, overlap, gsd_m=gsd_m)
             for model_type in MODEL_TYPES:
-                model = train(model_type, training_tile_index, TRAINING_TILES_DIR, training_data_file, tile_size, overlap, OUTPUT_MODELS_DIR)
+                model = train(model_type, training_tile_index, TRAINING_TILES_DIR, training_data_file, tile_size, OUTPUT_MODELS_DIR)
 
                 t0 = time.time()
-                model_performace = validate(model_type, model, VALIDATING_TILES_DIR, validation_tile_index, tile_size, overlap, gsd_m)
+                model_performace = validate(model_type, model, VALIDATING_TILES_DIR, validation_tile_index, tile_size)
                 duration = time.time() - t0
                 
                 model_performace = model_performace[model_performace['actual'] > 0]
