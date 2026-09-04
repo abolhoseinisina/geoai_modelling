@@ -51,7 +51,8 @@ def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, tile_size: int, overl
 
 def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index, tile_size, overlap):
     config = parseFinetuneConfig()
-    results = validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, config, tile_size, overlap, 0.5)
+    device = getDevice(config.device)
+    results = validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, 0.5)
     return results
 
 def train(model_type, tile_index, tiles_dir, data_file, tile_size, overlap, output_models_dir):
