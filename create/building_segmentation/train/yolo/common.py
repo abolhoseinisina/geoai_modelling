@@ -111,15 +111,13 @@ def validateYOLOModel(model: YOLO, validation_tiles_dir: Path, validation_tile_i
             rgb = np.array(Image.open(image_path).convert("RGB"))
             bgr = rgb[:, :, ::-1]
             result = model.predict(bgr, imgsz=tile_size, conf=0.01, verbose=False)[0]
-            if result.masks is None or result.boxes is None:
-                continue
-            
             pixel_polys = []
-            for xy, score in zip(result.masks.xy, result.boxes.conf.cpu().numpy()):
-                if float(score) < score_threshold or len(xy) < 3:
-                    continue
-                
-                pixel_polys.append(Polygon(xy))
+            if result.masks is not None and result.boxes is not None:
+                for xy, score in zip(result.masks.xy, result.boxes.conf.cpu().numpy()):
+                    if float(score) < score_threshold or len(xy) < 3:
+                        continue
+
+                    pixel_polys.append(Polygon(xy))
             
             recall, precision, true_positives, false_positives = _getPrecisionRecall(pixel_polys, ground_truth)
             iou, dice = _getIoUDice(pixel_polys, ground_truth)
