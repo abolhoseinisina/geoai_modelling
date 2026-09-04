@@ -91,11 +91,12 @@ def main():
                 
                 model_performace = model_performace[model_performace['actual'] > 0]
                 sum_columns = ['actual', 'predicted', 'true_positives', 'false_positives']
-                mean_columns = ['precision', 'recall', 'iou', 'dice']
                 group = model_performace.groupby('source')
-                sums = group[sum_columns].sum()
-                means = group[mean_columns].mean()
-                stats = pd.concat([sums, means], axis=1)
+                stats = group[sum_columns].sum()
+                stats['precision'] = stats['true_positives'] / (stats['true_positives'] + stats['false_positives']).clip(lower=1)
+                stats['recall'] = stats['true_positives'] / stats['actual'].clip(lower=1)
+                stats['iou'] = group['iou'].mean()
+                stats['dice'] = group['dice'].mean()
                 for row, source in stats.iterrows():
                     results.append({
                         'tile_size': tile_size, 
