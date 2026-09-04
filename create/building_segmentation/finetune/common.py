@@ -229,7 +229,6 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
     train_loader = DataLoader(BuildingTileDataset(tiles_dir, train_records, augment=True), shuffle=True, **loader_kwargs)
     val_loader = DataLoader(BuildingTileDataset(tiles_dir, val_records, augment=False), shuffle=False, **loader_kwargs)
 
-    device = getDevice(device)
     if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(device)}")
         torch.backends.cudnn.benchmark = True

@@ -41,7 +41,7 @@ YOLO_PC = YOLORunConfig(
     epochs=80,
     batch_size=8,
     imgsz=512,
-    model="yolo26l-seg.pt",
+    model="yolo26x-seg.pt",
     workers=4,
     patience=20,
 )
