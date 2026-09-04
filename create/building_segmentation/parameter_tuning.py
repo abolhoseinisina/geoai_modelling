@@ -13,14 +13,14 @@ OVERLAPS = [0, 32, 64, 128, 192]
 MODEL_TYPES = ['YOLO', 'MASK-RCNN']
 
 REPO = Path(__file__).resolve().parent.parent.parent
-TRAINING_IMAGES_DIR = REPO / 'training_dataset/building_segmentation_202608'
+TRAINING_IMAGES_DIR = REPO / 'datasets/training_datasets/building_segmentation_202608'
 TRAINING_DETECTION_FILE = TRAINING_IMAGES_DIR / 'training_buildings.geojson'
 TRAINING_TILES_DIR = REPO / 'create/building_segmentation/tiles/training'
 TRAINING_TILE_INDEX_FILE = TRAINING_TILES_DIR / "index.json"
 TRAINING_DATASET_DIR = TRAINING_TILES_DIR / 'dataset'
 TRAINING_DATASET_FILE = TRAINING_DATASET_DIR / 'data.yaml'
 
-VALIDATING_IMAGES_DIR = REPO / 'validation_dataset/building_segmentation_202608'
+VALIDATING_IMAGES_DIR = REPO / 'datasets/validating_datasets/building_segmentation_202608'
 VALIDATING_DETECTION_FILE = VALIDATING_IMAGES_DIR / 'validation_buildings.geojson'
 VALIDATING_TILES_DIR = REPO / 'create/building_segmentation/tiles/validating'
 VALIDATING_TILE_INDEX_FILE = VALIDATING_TILES_DIR / "index.json"
