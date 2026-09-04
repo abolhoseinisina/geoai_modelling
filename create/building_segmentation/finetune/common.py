@@ -284,8 +284,7 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
         epoch_tqdm.set_postfix_str(f"train {train_loss:.4f}  val {val_loss:.4f}")
 
     model.load_state_dict(torch.load(output_model_path, map_location=device, weights_only=True))
-    print(f'Fine-tuned model saved "{output_model_path.name}" (best val {best_val:.4f})')
-    return model
+    return output_model_path
 
 def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, config, tile_size, overlap, score_threshold):
     model = buildModel(weights_path=model)
