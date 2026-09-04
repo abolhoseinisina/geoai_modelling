@@ -23,6 +23,7 @@ if str(_BUILDING_SEG) not in sys.path:
 
 from device import cudaFreeBytes, getDevice, pickCudaDevice  # noqa: E402, F401
 from geo import BUILDINGS_GEOJSON, DATA_DIR, TILE_SIZE, getRasterResolution, getSamplingScales, getWindowOrigins  # noqa: E402
+from nms import NMS_IOU, georeferencePolygons, performNMS  # noqa: E402
 
 PRETRAINED_PATH = HERE.parent.parent.parent / "models/building_footprints_usa.pth"
 FINETUNED_PATH = HERE / "output/finetuned_building_footprints_usa.pth"
@@ -285,41 +286,48 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
     model.load_state_dict(torch.load(output_model_path, map_location=device, weights_only=True))
     return output_model_path
 
-def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, score_threshold):
-    model = buildModel(weights_path=model)
+def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, score_threshold, tile_size: int, truth_by_source: dict[str, list[Polygon]]):
+    model = buildModel(weights_path=model, num_classes=2, image_size=tile_size)
     model.to(device).eval()
     
     validation_df = pd.DataFrame(validation_tile_index)
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate Finetune', ncols=100):
+        polygons: list[Polygon] = []
+        scores: list[float] = []
         for _, tile in tiles.iterrows():
-            ground_truth = [Polygon(rings[0], rings[1:]) for rings in tile['polygons']]
             image_path = validation_tiles_dir / tile['image']
             rgb = np.array(Image.open(image_path).convert("RGB"))
             chw = np.transpose(rgb, (2, 0, 1))
             tensor = torch.from_numpy(chw).float().div_(255)
             result = _applyModel2Tile(model, tensor, device, score_threshold)
             pixel_polys = []
+            pixel_scores = []
             for poly_px, score in result:
                 if float(score) < score_threshold:
                     continue
-                
                 pixel_polys.append(poly_px)
-            
-            recall, precision, true_positives, false_positives = _getPrecisionRecall(pixel_polys, ground_truth)
-            iou, dice = _getIoUDice(pixel_polys, ground_truth)
-            actual, predicted = len(ground_truth), len(pixel_polys)
-            results.append({
-                'source': raster, 
-                'tile': image_path.name, 
-                'actual': actual, 
-                'predicted': predicted, 
-                'recall': recall, 
-                'precision': precision, 
-                'true_positives': true_positives, 
-                'false_positives': false_positives, 
-                'iou': iou, 
-                'dice': dice
-            })
+                pixel_scores.append(float(score))
+
+            mapped, mapped_scores = georeferencePolygons(pixel_polys, pixel_scores, tile['transform'])
+            polygons.extend(mapped)
+            scores.extend(mapped_scores)
+
+        keep = performNMS(polygons, scores, NMS_IOU)
+        predicted = [polygons[i] for i in keep]
+        ground_truth = truth_by_source.get(raster, [])
+        recall, precision, true_positives, false_positives = _getPrecisionRecall(predicted, ground_truth)
+        iou, dice = _getIoUDice(predicted, ground_truth)
+        results.append({
+            'source': raster,
+            'actual': len(ground_truth),
+            'predicted': len(predicted),
+            'recall': recall,
+            'precision': precision,
+            'true_positives': true_positives,
+            'false_positives': false_positives,
+            'iou': iou,
+            'dice': dice,
+        })
     
-    return pd.DataFrame(results)
+    return results

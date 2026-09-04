@@ -124,6 +124,30 @@ def transformFootprints(gdf: gpd.GeoDataFrame, raster) -> gpd.GeoDataFrame:
 
     return gdf
 
+def loadGroundTruthBySource(images_dir: Path, detection_file: Path) -> dict[str, list[Polygon]]:
+    buildings = loadTrainingBuildings(detection_file)
+    truth: dict[str, list[Polygon]] = {}
+    for tif_path, footprints in pairImagesWithFootprints(buildings, images_dir):
+        with rasterio.open(tif_path) as src:
+            gdf = transformFootprints(footprints, src)
+            raster_box = box(*src.bounds)
+            polygons = []
+            for geom in gdf.geometry:
+                clipped = geom.intersection(raster_box)
+                if clipped.is_empty:
+                    continue
+                
+                parts = [clipped] if clipped.geom_type == "Polygon" else list(getattr(clipped, "geoms", []))
+                for part in parts:
+                    if not part.is_valid:
+                        part = make_valid(part)
+                    if part.geom_type == "Polygon" and not part.is_empty:
+                        polygons.append(part)
+            
+            truth[tif_path.name] = polygons
+    
+    return truth
+
 def getRGBStretchBounds(raster, band_indexes) -> tuple[np.ndarray, np.ndarray] | None:
     if raster.dtypes[0] == "uint8":
         return None

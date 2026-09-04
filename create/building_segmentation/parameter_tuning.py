@@ -2,7 +2,7 @@ import time
 import pandas as pd
 from pathlib import Path
 from device import getDevice
-from tiling import generateTiles, generateDataYML
+from tiling import generateTiles, generateDataYML, loadGroundTruthBySource
 from config import parseYOLOConfig, parseFinetuneConfig
 from train.yolo.common import trainYOLOModel, validateYOLOModel
 from finetune.common import finetuneMaskRCNN, validateMaskRCNNModel
@@ -40,8 +40,8 @@ def trainYolo(data_yaml: Path, tile_size: int, output_model_dir: Path):
     model = trainYOLOModel(config.model, data_yaml, device, config.epochs, tile_size, config.batch_size, config.workers, config.patience, output_model_dir)
     return model
 
-def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size):
-    return validateYOLOModel(model, validation_tiles_dir, validation_tile_index, tile_size, 0.5)
+def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size, truth_by_source):
+    return validateYOLOModel(model, validation_tiles_dir, validation_tile_index, tile_size, 0.5, truth_by_source)
 
 def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, tile_size: int, output_models_dir: Path):
     config = parseFinetuneConfig()
@@ -49,11 +49,10 @@ def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, tile_size: int, outpu
     model = finetuneMaskRCNN(config.pretrained_model_path, tile_index, tiles_dir, tile_size, SEED, 0.2, config.batch_size, config.num_workers, config.pin_memory, device, config.epochs, config.learning_rate, output_models_dir)
     return model
 
-def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index):
+def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index, tile_size, truth_by_source):
     config = parseFinetuneConfig()
     device = getDevice(config.device)
-    results = validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, 0.5)
-    return results
+    return validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, 0.5, tile_size, truth_by_source)
 
 def train(model_type, tile_index, tiles_dir, data_file, tile_size, output_models_dir):
     if model_type == 'YOLO':
@@ -64,18 +63,19 @@ def train(model_type, tile_index, tiles_dir, data_file, tile_size, output_models
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
-def validate(model_type, model, validation_tiles_dir, validation_tile_index, tile_size):
+def validate(model_type, model, validation_tiles_dir, validation_tile_index, tile_size, truth_by_source):
     if model_type == 'YOLO':
-        return validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size)
+        return validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size, truth_by_source)
 
     elif model_type == 'MASK-RCNN':
-        return validateMaskRCNN(model, validation_tiles_dir, validation_tile_index)
+        return validateMaskRCNN(model, validation_tiles_dir, validation_tile_index, tile_size, truth_by_source)
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
 def main():
     gsd_m = 0.1
     results = []
+    truth_by_source = loadGroundTruthBySource(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE)
     
     for tile_size in TILE_SIZES:
         for overlap in OVERLAPS:
@@ -86,30 +86,22 @@ def main():
                 model = train(model_type, training_tile_index, TRAINING_TILES_DIR, training_data_file, tile_size, OUTPUT_MODELS_DIR)
 
                 t0 = time.time()
-                model_performace = validate(model_type, model, VALIDATING_TILES_DIR, validation_tile_index, tile_size)
+                model_performance = validate(model_type, model, VALIDATING_TILES_DIR, validation_tile_index, tile_size, truth_by_source)
                 duration = time.time() - t0
-                
-                model_performace = model_performace[model_performace['actual'] > 0]
-                sum_columns = ['actual', 'predicted', 'true_positives', 'false_positives']
-                group = model_performace.groupby('source')
-                stats = group[sum_columns].sum()
-                stats['precision'] = stats['true_positives'] / (stats['true_positives'] + stats['false_positives']).clip(lower=1)
-                stats['recall'] = stats['true_positives'] / stats['actual'].clip(lower=1)
-                stats['iou'] = group['iou'].mean()
-                stats['dice'] = group['dice'].mean()
-                for row, source in stats.iterrows():
+
+                for validation_row in model_performance:
                     results.append({
                         'tile_size': tile_size, 
                         'overlap': overlap, 
                         'model': model_type, 
                         'validation_duration_sec': round(duration, 2),
-                        'source': row, 
-                        'actual': int(source['actual']), 
-                        'predicted': int(source['predicted']), 
-                        'precision': round(source['precision'], 4), 
-                        'recall': round(source['recall'], 4), 
-                        'iou': round(source['iou'], 4), 
-                        'dice': round(source['dice'], 4)
+                        'source': validation_row['source'], 
+                        'actual': int(validation_row['actual']), 
+                        'predicted': int(validation_row['predicted']), 
+                        'precision': round(validation_row['precision'], 4), 
+                        'recall': round(validation_row['recall'], 4), 
+                        'iou': round(validation_row['iou'], 4), 
+                        'dice': round(validation_row['dice'], 4)
                     })
                
                 results_df = pd.DataFrame(results)

@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -9,6 +10,12 @@ from shapely.geometry import Polygon
 from shapely.validation import make_valid
 
 HERE = Path(__file__).resolve().parent
+_BUILDING_SEG = HERE.parent.parent
+if str(_BUILDING_SEG) not in sys.path:
+    sys.path.insert(0, str(_BUILDING_SEG))
+
+from nms import NMS_IOU, georeferencePolygons, performNMS
+
 TILES_DIR = HERE / "tiles"
 TILE_INDEX = TILES_DIR / "index.json"
 DATASET_DIR = HERE / "dataset"
@@ -100,39 +107,46 @@ def trainYOLOModel(yolo_base_model, data_yaml: Path, device, epochs: int, tile_s
     model.train(data=str(data_yaml), epochs=epochs, imgsz=tile_size, batch=batch_size, device=device, workers=workers, patience=patience, project=str(output_dir), name="train", exist_ok=True, plots=True)
     return YOLO(str(output_dir / "train/weights/best.pt"))
 
-def validateYOLOModel(model: YOLO, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float):
+def validateYOLOModel(model: YOLO, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]]):
     validation_df = pd.DataFrame(validation_tile_index)
     
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate YOLO', ncols=100):
+        polygons: list[Polygon] = []
+        scores: list[float] = []
         for _, tile in tiles.iterrows():
-            ground_truth = [Polygon(rings[0], rings[1:]) for rings in tile['polygons']]
             image_path = validation_tiles_dir / tile['image']
             rgb = np.array(Image.open(image_path).convert("RGB"))
             bgr = rgb[:, :, ::-1]
             result = model.predict(bgr, imgsz=tile_size, conf=0.01, verbose=False)[0]
             pixel_polys = []
+            pixel_scores = []
             if result.masks is not None and result.boxes is not None:
                 for xy, score in zip(result.masks.xy, result.boxes.conf.cpu().numpy()):
                     if float(score) < score_threshold or len(xy) < 3:
                         continue
-
                     pixel_polys.append(Polygon(xy))
-            
-            recall, precision, true_positives, false_positives = _getPrecisionRecall(pixel_polys, ground_truth)
-            iou, dice = _getIoUDice(pixel_polys, ground_truth)
-            actual, predicted = len(ground_truth), len(pixel_polys)
-            results.append({
-                'source': raster, 
-                'tile': image_path.name, 
-                'actual': actual, 
-                'predicted': predicted, 
-                'recall': recall, 
-                'precision': precision, 
-                'true_positives': true_positives, 
-                'false_positives': false_positives, 
-                'iou': iou, 
-                'dice': dice
-            })
+                    pixel_scores.append(float(score))
+
+            mapped, mapped_scores = georeferencePolygons(pixel_polys, pixel_scores, tile['transform'])
+            polygons.extend(mapped)
+            scores.extend(mapped_scores)
+
+        keep = performNMS(polygons, scores, NMS_IOU)
+        predicted = [polygons[i] for i in keep]
+        ground_truth = truth_by_source.get(raster, [])
+        recall, precision, true_positives, false_positives = _getPrecisionRecall(predicted, ground_truth)
+        iou, dice = _getIoUDice(predicted, ground_truth)
+        results.append({
+            'source': raster,
+            'actual': len(ground_truth),
+            'predicted': len(predicted),
+            'recall': recall,
+            'precision': precision,
+            'true_positives': true_positives,
+            'false_positives': false_positives,
+            'iou': iou,
+            'dice': dice,
+        })
     
-    return pd.DataFrame(results)
+    return results
