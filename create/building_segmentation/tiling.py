@@ -15,12 +15,12 @@ from shapely.validation import make_valid
 from shapely.geometry import Polygon, box
 from shapely.affinity import affine_transform
 from rasterio.windows import bounds as window_bounds
-from geo import BUILDINGS_GEOJSON, DATA_DIR, TILE_SIZE, getSamplingScales, getWindowOrigins
+from geo import BUILDINGS_GEOJSON, DATA_DIR, MIN_GSD_M, TILE_SIZE, getSamplingScales, getWindowOrigins
 
 SEED = 42
 OVERLAP = 128
 NEGATIVE_RATIO = 0.5
-IMAGE_NAME_COLUMN = "image_name"
+IMAGE_NAME_COLUMN = 'image_name'
 MAX_BLANK_FRACTION = 0.5
 MIN_INSTANCE_AREA_PX = 24
 
@@ -185,9 +185,9 @@ def writeImageTile(tiles_dir: Path, tif_path, array, transform, crs, polygons, r
         }
     )
 
-def tileImage(tiles_dir: Path, tif_path, footprints: gpd.GeoDataFrame, records: list[dict], tile_size: int = TILE_SIZE) -> None:
+def tileImage(tiles_dir: Path, tif_path, footprints: gpd.GeoDataFrame, records: list[dict], tile_size: int = TILE_SIZE, overlap: int = OVERLAP, gsd_m: float = MIN_GSD_M) -> None:
     with rasterio.open(tif_path) as src:
-        scale_x, scale_y, target_gsd = getSamplingScales(src)
+        scale_x, scale_y, target_gsd = getSamplingScales(src, gsd_m)
         footprints = transformFootprints(footprints, src)
         band_indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
         stretch = getRGBStretchBounds(src, band_indexes)
@@ -195,8 +195,8 @@ def tileImage(tiles_dir: Path, tif_path, footprints: gpd.GeoDataFrame, records: 
 
         source_width = tile_size * scale_x
         source_height = tile_size * scale_y
-        step_x = (tile_size - OVERLAP) * scale_x
-        step_y = (tile_size - OVERLAP) * scale_y
+        step_x = (tile_size - overlap) * scale_x
+        step_y = (tile_size - overlap) * scale_y
 
         negatives: list[tuple] = []
         positives_before = len(records)
@@ -256,3 +256,81 @@ def executeTiling(tiles_dir: Path, tile_index: Path, alignment_path: Path | None
         writeAlignmentCheck(tiles_dir, random.choice(labeled), alignment_path)
 
     return records
+
+def generateTiles(images_dir: Path, detection_file: Path, tiles_dir: Path, tile_index_file: Path, tile_size: int, overlap: int, gsd_m: float):
+    if not images_dir.is_dir():
+        raise SystemExit(f'invalid "images_dir": {images_dir}')
+
+    if tiles_dir.exists():
+        shutil.rmtree(tiles_dir)
+    
+    (tiles_dir / "images").mkdir(parents=True)
+    
+    buildings = loadTrainingBuildings(detection_file)
+    tif_building_pairs = pairImagesWithFootprints(buildings, images_dir)
+    
+    records: list[dict] = []
+    for tif_path, footprints in tqdm(tif_building_pairs, desc="Generate Tiles", ncols=100, postfix=f'tz: {tile_size}, op: {overlap}, gsd: {gsd_m}'):
+        tileImage(tiles_dir, tif_path, footprints, records, tile_size, overlap, gsd_m)
+
+    if not records:
+        raise SystemExit("No tiles were written - check the alignment warnings above.")
+
+    tile_index_file.write_text(json.dumps(records))
+    return records
+
+def yoloLabelLines(record: dict) -> list[str]:
+    size = record['size']
+    lines = []
+    for rings in record['polygons']:
+        exterior = rings[0]
+        if len(exterior) < 3:
+            continue
+        
+        coords = np.clip(np.array(exterior, dtype=np.float64) / size, 0, 1)
+        if len(coords) > 3 and np.allclose(coords[0], coords[-1]):
+            coords = coords[:-1]
+        
+        if len(coords) < 3:
+            continue
+        
+        coord_str = ' '.join(f'{x:.6f} {y:.6f}' for x, y in coords)
+        lines.append(f'0 {coord_str}')
+    
+    return lines
+
+def generateDataYML(tile_index: dict, tiles_dir: Path, dataset_dir: Path, data_file: Path, validation_fraction: float, seed: int = SEED):
+    rng = random.Random(seed)
+    shuffled = list(tile_index)
+    rng.shuffle(shuffled)
+    cut = max(1, int(len(shuffled) * validation_fraction))
+    splits = { 'val': shuffled[:cut], 'train': shuffled[cut:]}
+
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
+
+    for split, split_records in splits.items():
+        image_dir = dataset_dir / 'images' / split
+        label_dir = dataset_dir / 'labels' / split
+        image_dir.mkdir(parents=True)
+        label_dir.mkdir(parents=True)
+        for record in tqdm(split_records, desc=f'Writing Data ({split})', ncols=100):
+            src = tiles_dir / record['image']
+            dest_image = image_dir / Path(record['image']).name
+            shutil.copy2(src, dest_image)
+            (label_dir / f'{dest_image.stem}.txt').write_text('\n'.join(yoloLabelLines(record)))
+
+    data_file.write_text(
+        '\n'.join(
+            [
+                f'path: {dataset_dir.resolve()}',
+                'train: images/train',
+                'val: images/val',
+                'names:',
+                '  0: building',
+                '',
+            ]
+        )
+    )
+    
+    return data_file
