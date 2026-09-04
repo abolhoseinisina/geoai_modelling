@@ -48,7 +48,7 @@ YOLO_PC = YOLORunConfig(
 
 FT_MAC = FTRunConfig(
     name="mac",
-    pretrained_model_path="/Users/sina/Desktop/FastMap/geoai_modelling/geoai_modelling/models/building_footprints_usa.pth",
+    pretrained_model_path="../../models/building_footprints_usa.pth",
     device="cpu",
     epochs=1,
     batch_size=2,
@@ -59,7 +59,7 @@ FT_MAC = FTRunConfig(
 
 FT_PC = FTRunConfig(
     name="pc",
-    pretrained_model_path="/Users/sina/Desktop/FastMap/geoai_modelling/geoai_modelling/models/building_footprints_usa.pth",
+    pretrained_model_path="../../models/building_footprints_usa.pth",
     device="cuda",
     epochs=24,
     batch_size=4,
