@@ -2,7 +2,6 @@ import torch
 import random
 import numpy as np
 from PIL import Image
-from common import TILES_DIR
 from shapely.geometry import Polygon
 from torch.utils.data import Dataset
 from rasterio.features import rasterize
@@ -10,7 +9,8 @@ from rasterio.features import rasterize
 class BuildingTileDataset(Dataset):
     """Tiles plus per-building instance masks, rasterized on demand."""
 
-    def __init__(self, records: list[dict], augment: bool):
+    def __init__(self, tiles_dir: str, records: list[dict], augment: bool):
+        self.tiles_dir = tiles_dir
         self.records = records
         self.augment = augment
 
@@ -28,7 +28,7 @@ class BuildingTileDataset(Dataset):
 
     def __getitem__(self, index: int):
         record = self.records[index]
-        image = np.array(Image.open(TILES_DIR / record["image"]).convert("RGB"))
+        image = np.array(Image.open(self.tiles_dir / record["image"]).convert("RGB"))
         masks = self._masks(record)
 
         if self.augment:
