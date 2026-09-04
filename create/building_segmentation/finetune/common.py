@@ -123,7 +123,7 @@ def loadAndUnwrapStateDict(path: Path) -> dict[str, torch.Tensor]:
     return {key.removeprefix("module."): value for key, value in checkpoint.items()}
 
 
-def buildModel(weights_path: Path | None = None, num_classes: int = NUM_CLASSES, image_size: int = TILE_SIZE) -> nn.Module:
+def buildModel(weights_path: Path, num_classes: int, image_size: int) -> nn.Module:
     model = maskrcnn_resnet50_fpn(weights=None, weights_backbone=None, num_classes=num_classes, min_size=image_size, max_size=image_size)
     if weights_path is not None:
         model.load_state_dict(loadAndUnwrapStateDict(weights_path))
@@ -217,7 +217,7 @@ def _applyModel2Tile(model, image_chw: torch.Tensor, device, score_threshold) ->
     
     return results
 
-def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_dir: Path, random_seed: int, validation_fraction: float, batch_size: int, num_workers: int, pin_memory: bool, device, epochs, learning_rate, output_models_dir):
+def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_dir: Path, tile_size: int, random_seed: int, validation_fraction: float, batch_size: int, num_workers: int, pin_memory: bool, device, epochs, learning_rate, output_models_dir):
     torch.manual_seed(random_seed)
     random.seed(random_seed)
 
@@ -233,7 +233,7 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
         print(f"GPU: {torch.cuda.get_device_name(device)}")
         torch.backends.cudnn.benchmark = True
 
-    model = buildModel(weights_path=pretrained_model_path)
+    model = buildModel(weights_path=pretrained_model_path, num_classes=2, image_size=tile_size)
     freezeBackbone(model, TRAINABLE_BACKBONE_STAGES)
     freezeBatchnorm(model)
     model.to(device)

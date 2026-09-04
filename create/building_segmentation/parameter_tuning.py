@@ -43,10 +43,10 @@ def trainYolo(data_yaml: Path, tile_size: int, output_model_dir: Path):
 def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size):
     return validateYOLOModel(model, validation_tiles_dir, validation_tile_index, tile_size, 0.5)
 
-def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, output_models_dir: Path):
+def trainMaskRCNN(tile_index: list[dict], tiles_dir: Path, tile_size: int, output_models_dir: Path):
     config = parseFinetuneConfig()
     device = getDevice(config.device)
-    model = finetuneMaskRCNN(config.pretrained_model_path, tile_index, tiles_dir, SEED, 0.2, config.batch_size, config.num_workers, config.pin_memory, device, config.epochs, config.learning_rate, output_models_dir)
+    model = finetuneMaskRCNN(config.pretrained_model_path, tile_index, tiles_dir, tile_size, SEED, 0.2, config.batch_size, config.num_workers, config.pin_memory, device, config.epochs, config.learning_rate, output_models_dir)
     return model
 
 def validateMaskRCNN(model, validation_tiles_dir, validation_tile_index):
@@ -60,7 +60,7 @@ def train(model_type, tile_index, tiles_dir, data_file, tile_size, output_models
         return trainYolo(data_file, tile_size, output_models_dir)
 
     elif model_type == 'MASK-RCNN':
-        return trainMaskRCNN(tile_index, tiles_dir, output_models_dir)
+        return trainMaskRCNN(tile_index, tiles_dir, tile_size, output_models_dir)
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
