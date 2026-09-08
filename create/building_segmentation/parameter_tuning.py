@@ -1,11 +1,14 @@
+import os
 import time
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from device import getDevice
-from tiling import generateTiles, generateDataYML, loadGroundTruthBySource
+import matplotlib.pyplot as plt
 from config import parseYOLOConfig, parseFinetuneConfig
 from train.yolo.common import trainYOLOModel, validateYOLOModel
 from finetune.common import finetuneMaskRCNN, validateMaskRCNNModel
+from tiling import generateTiles, generateDataYML, loadGroundTruthBySource
 
 SEED = 42
 
@@ -31,8 +34,117 @@ VALIDATING_DATASET_FILE = VALIDATING_DATASET_DIR / 'data.yaml'
 OUTPUT_DIR = REPO / 'create/building_segmentation/output'
 OUTPUT_MODELS_DIR = OUTPUT_DIR / 'models'
 
-def drawComparisonChart(results, file_path):
-    return
+def plotHeatmapPerModelTileSizeOverlap(tuning_results, column_name: str, title: str):
+    tile_sizes = sorted(tuning_results['tile_size'].unique())
+    overlaps = sorted(tuning_results['overlap'].unique())
+    models = sorted(tuning_results['model'].unique())
+
+    cmap = plt.get_cmap("YlGnBu")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6), sharey=True)
+    for idx, model in enumerate(models):
+        data = tuning_results[tuning_results['model'] == model]
+        heatmap_data = data.pivot_table(index='tile_size', columns='overlap', values=column_name, aggfunc='mean')
+        heatmap_data = heatmap_data.reindex(index=tile_sizes, columns=overlaps)
+        heatmap_values = heatmap_data.values
+        ax = axes[idx]
+        im = ax.imshow(heatmap_values, aspect="auto", cmap=cmap, vmin=np.nanmin(heatmap_values), vmax=np.nanmax(heatmap_values))
+        ax.set_xticks(np.arange(len(overlaps)))
+        ax.set_yticks(np.arange(len(tile_sizes)))
+        ax.set_xticklabels(overlaps)
+        ax.set_yticklabels(tile_sizes if idx == 1 else [""]*len(tile_sizes))
+        ax.set_xlabel('Overlap')
+        if idx == 0:
+            ax.set_ylabel('Tile Size')
+        
+        for i in range(len(tile_sizes)):
+            for j in range(len(overlaps)):
+                val = heatmap_values[i, j]
+                text = f"{val:.2f}" if not np.isnan(val) else "NA"
+                ax.text(j, i, text, ha="center", va="center", color="black" if np.isnan(val) or val < (np.nanmax(heatmap_values) * 0.7) else "white", fontsize=10)
+        
+        ax.set_title(model)
+        if idx == 1:
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=title)
+
+    plt.suptitle(f"{title} Heatmap")
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(f'output/parameter_tuning/{column_name}_per_model_per_tilesize_per_overlap.jpg', dpi=300)
+    plt.close()
+
+def plotHeatmapPerModelEnv(tuning_results, column_name: str, title: str):
+    envs = sorted(tuning_results['env'].unique())
+    tile_sizes = sorted(tuning_results['tile_size'].unique())
+    overlaps = sorted(tuning_results['overlap'].unique())
+    models = sorted(tuning_results['model'].unique())
+
+    cmap = plt.get_cmap("YlGnBu")
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharey=True)
+    for idx_c, model in enumerate(models):
+        for idx_r, param in enumerate([tile_sizes, overlaps]):
+            ax = axes[idx_r, idx_c]
+            data = tuning_results[tuning_results['model'] == model]
+            if idx_r == 0:
+                heatmap_data = data.pivot_table(index='env', columns='tile_size', values=column_name, aggfunc='mean')
+                ax.set_xlabel('Tile Size')
+            else:
+                heatmap_data = data.pivot_table(index='env', columns='overlap', values=column_name, aggfunc='mean')
+                ax.set_xlabel('Overlap')
+                
+            heatmap_data = heatmap_data.reindex(index=envs, columns=param)
+            heatmap_values = heatmap_data.values
+            im = ax.imshow(heatmap_values, aspect="auto", cmap=cmap, vmin=np.nanmin(heatmap_values), vmax=np.nanmax(heatmap_values))
+            ax.set_xticks(np.arange(len(param)))
+            ax.set_yticks(np.arange(len(envs)))
+            ax.set_xticklabels(param)
+            ax.set_yticklabels(envs if idx_c == 1 else [""]*len(envs))
+            if idx_c == 0:
+                ax.set_ylabel('Environment')
+            
+            for i in range(len(envs)):
+                for j in range(len(param)):
+                    val = heatmap_values[i, j]
+                    text = f"{val:.2f}" if not np.isnan(val) else "NA"
+                    ax.text(j, i, text, ha="center", va="center", color="black" if np.isnan(val) or val < (np.nanmax(heatmap_values) * 0.7) else "white", fontsize=10)
+            
+            ax.set_title(model)
+            if idx_c == 1:
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=title)
+    
+    plt.suptitle(f"{title} Heatmap")
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(f'output/parameter_tuning/{column_name}_per_model_per_env.jpg', dpi=300)
+    plt.close()
+
+def drawComparisonChart(file_path):
+    envs = {
+        'crop_0': 'mixed',
+        'crop_1': 'tall',
+        'crop_2': 'wide',
+        'crop_3': 'residential',
+    }
+
+    tuning_results = pd.read_csv(file_path, index_col=0)
+    
+    tuning_results['env'] = None
+    for ind, row in tuning_results.iterrows():
+        for env, type in envs.items():
+            if env in row['source']:
+                tuning_results.at[ind, 'env'] = type
+
+    tuning_results['f1'] = 2 * (tuning_results['precision'] * tuning_results['recall']) / (tuning_results['precision'] + tuning_results['recall'])
+    tuning_results['f1'] = tuning_results['f1'].fillna(0)
+    tuning_results['f1_weighted'] = tuning_results['f1'] * tuning_results['actual']
+
+    tuning_results = tuning_results[tuning_results['tile_size'] != 960]
+    os.makedirs('output/parameter_tuning/', exist_ok=True)
+    plotHeatmapPerModelTileSizeOverlap(tuning_results, 'f1', 'F1-Score')
+    plotHeatmapPerModelTileSizeOverlap(tuning_results, 'f1_weighted', 'Weighted F1-Score')
+    plotHeatmapPerModelTileSizeOverlap(tuning_results, 'dice', 'Dice')
+    plotHeatmapPerModelTileSizeOverlap(tuning_results, 'iou', 'IoU')
+    plotHeatmapPerModelTileSizeOverlap(tuning_results, 'validation_duration_sec', 'Inference Duration (sec)')
+    plotHeatmapPerModelEnv(tuning_results, 'f1', 'F1-Score')
+    plotHeatmapPerModelEnv(tuning_results, 'dice', 'Dice')
+    plotHeatmapPerModelEnv(tuning_results, 'validation_duration_sec', 'Inference Duration (sec)')
 
 def trainYolo(data_yaml: Path, tile_size: int, output_model_dir: Path):
     config = parseYOLOConfig()
@@ -107,7 +219,7 @@ def main():
                 results_df = pd.DataFrame(results)
                 results_df.to_csv('output/parameter_tuning.csv')
     
-    drawComparisonChart(results_df, 'output/parameter_tuning.jpg')
+    drawComparisonChart('output/parameter_tuning.csv')
 
 if __name__ == '__main__':
     main()
