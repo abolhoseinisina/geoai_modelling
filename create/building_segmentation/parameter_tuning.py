@@ -135,8 +135,6 @@ def drawComparisonChart(file_path):
     tuning_results['f1'] = tuning_results['f1'].fillna(0)
     tuning_results['f1_weighted'] = tuning_results['f1'] * tuning_results['actual']
 
-    tuning_results = tuning_results[tuning_results['tile_size'] != 960]
-    os.makedirs('output/parameter_tuning/', exist_ok=True)
     plotHeatmapPerModelTileSizeOverlap(tuning_results, 'f1', 'F1-Score')
     plotHeatmapPerModelTileSizeOverlap(tuning_results, 'f1_weighted', 'Weighted F1-Score')
     plotHeatmapPerModelTileSizeOverlap(tuning_results, 'dice', 'Dice')
@@ -185,6 +183,7 @@ def validate(model_type, model, validation_tiles_dir, validation_tile_index, til
     raise SystemExit('Error: Wrong "model_type" value.')
 
 def main():
+    os.makedirs('output/parameter_tuning/', exist_ok=True)
     gsd_m = 0.1
     results = []
     truth_by_source = loadGroundTruthBySource(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE)
@@ -217,9 +216,9 @@ def main():
                     })
                
                 results_df = pd.DataFrame(results)
-                results_df.to_csv('output/parameter_tuning.csv')
+                results_df.to_csv('output/parameter_tuning/parameter_tuning.csv')
     
-    drawComparisonChart('output/parameter_tuning.csv')
+    drawComparisonChart('output/parameter_tuning/parameter_tuning.csv')
 
 if __name__ == '__main__':
     main()
