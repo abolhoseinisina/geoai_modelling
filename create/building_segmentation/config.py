@@ -1,95 +1,47 @@
+import json
 import torch
-import argparse
-from dataclasses import dataclass
+from pyproj import Geod
+from pathlib import Path
+from train.yolo.config import YOLOConfig
+from finetune.config import FineTuneConfig
 
-@dataclass(frozen=True)
-class YOLORunConfig:
-    name: str
-    device: str
-    epochs: int
-    batch_size: int
-    imgsz: int
-    model: str
-    workers: int
-    patience: int
+SEED = 42
 
-@dataclass(frozen=True)
-class FTRunConfig:
-    name: str
-    pretrained_model_path: str
-    device: str
-    epochs: int
-    batch_size: int
-    learning_rate: float
-    num_workers: int
-    pin_memory: bool
+IMAGE_NAME_COLUMN = 'image_name'
+NEGATIVE_RATIO = 0.5
+MAX_BLANK_FRACTION = 0.5
+MIN_INSTANCE_AREA_PX = 24
 
-YOLO_MAC = YOLORunConfig(
-    name="mac",
-    device="mps",
-    epochs=1,
-    batch_size=2,
-    imgsz=512,
-    model="yolo26n-seg.pt",
-    workers=0,
-    patience=1,
-)
+GEOD = Geod(ellps="WGS84")
 
-YOLO_PC = YOLORunConfig(
-    name="pc",
-    device="cuda",
-    epochs=80,
-    batch_size=8,
-    imgsz=512,
-    model="yolo26x-seg.pt",
-    workers=4,
-    patience=20,
-)
+REPO = Path(__file__).resolve().parent.parent.parent
+TRAINING_IMAGES_DIR = REPO / 'datasets/training_datasets/building_segmentation_202608'
+TRAINING_DETECTION_FILE = TRAINING_IMAGES_DIR / 'training_buildings.geojson'
+TRAINING_TILES_DIR = REPO / 'create/building_segmentation/tiles/training'
+TRAINING_TILE_INDEX_FILE = TRAINING_TILES_DIR / "index.json"
+TRAINING_DATASET_DIR = TRAINING_TILES_DIR / 'dataset'
+TRAINING_DATASET_FILE = TRAINING_DATASET_DIR / 'data.yaml'
 
-FT_MAC = FTRunConfig(
-    name="mac",
-    pretrained_model_path="../../models/building_footprints_usa.pth",
-    device="cpu",
-    epochs=1,
-    batch_size=2,
-    learning_rate=0.002,
-    num_workers=0,
-    pin_memory=False,
-)
+VALIDATING_IMAGES_DIR = REPO / 'datasets/validating_datasets/building_segmentation_202608'
+VALIDATING_DETECTION_FILE = VALIDATING_IMAGES_DIR / 'validation_buildings.geojson'
+VALIDATING_TILES_DIR = REPO / 'create/building_segmentation/tiles/validating'
+VALIDATING_TILE_INDEX_FILE = VALIDATING_TILES_DIR / "index.json"
+VALIDATING_DATASET_DIR = VALIDATING_TILES_DIR / 'dataset'
+VALIDATING_DATASET_FILE = VALIDATING_DATASET_DIR / 'data.yaml'
 
-FT_PC = FTRunConfig(
-    name="pc",
-    pretrained_model_path="../../models/building_footprints_usa.pth",
-    device="cuda",
-    epochs=24,
-    batch_size=4,
-    learning_rate=0.005,
-    num_workers=4,
-    pin_memory=True,
-)
-
-YOLO_CONFIGS = {"mac": YOLO_MAC, "pc": YOLO_PC}
-FT_CONFIGS = {"mac": FT_MAC, "pc": FT_PC}
+OUTPUT_DIR = REPO / 'create/building_segmentation/output'
+OUTPUT_MODELS_DIR = OUTPUT_DIR / 'models'
 
 def defaultConfigName() -> str:
     return "pc" if torch.cuda.is_available() else "mac"
 
-def getYOLOConfig() -> YOLORunConfig:
+def getFinalModelConfig():
+    config_path = 'final_model_config.json'
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
     key = defaultConfigName()
-    if key not in YOLO_CONFIGS:
-        raise SystemExit(f"unknown config '{key}'. choose one of: {', '.join(YOLO_CONFIGS)}")
+    config['YOLO'] = YOLOConfig(key)
+    config['MASK-RCNN'] = FineTuneConfig(key)
     
-    return YOLO_CONFIGS[key]
-
-def getFinetuneConfig() -> FTRunConfig:
-    key = defaultConfigName()
-    if key not in FT_CONFIGS:
-        raise SystemExit(f"unknown config '{key}'. choose one of: {', '.join(FT_CONFIGS)}")
-    
-    return FT_CONFIGS[key]
-
-def parseYOLOConfig() -> YOLORunConfig:
-    return getYOLOConfig()
-
-def parseFinetuneConfig() -> FTRunConfig:
-    return getFinetuneConfig()
+    return config
