@@ -1,10 +1,10 @@
 import torch
 
-def cudaFreeBytes(index: int) -> int:
+def _getCudaFreeCapacity(index: int) -> int:
     with torch.cuda.device(index):
         return torch.cuda.mem_get_info()[0]
 
-def pickCudaDevice(index: int | None = None) -> torch.device:
+def _selectCudaDevice(index: int | None = None) -> torch.device:
     if not torch.cuda.is_available():
         raise SystemExit("config requested CUDA, but torch.cuda.is_available() is False")
 
@@ -19,8 +19,8 @@ def pickCudaDevice(index: int | None = None) -> torch.device:
         chosen = 0
     
     else:
-        chosen = max(range(count), key=lambda i: (cudaFreeBytes(i), i))
-        free = [round(cudaFreeBytes(i) / 1024**2) for i in range(count)]
+        chosen = max(range(count), key=lambda i: (_getCudaFreeCapacity(i), i))
+        free = [round(_getCudaFreeCapacity(i) / 1024**2) for i in range(count)]
         print(f"CUDA devices: {count}  free MiB={free}  using cuda:{chosen} ({torch.cuda.get_device_name(chosen)})")
 
     torch.cuda.set_device(chosen)
@@ -29,7 +29,7 @@ def pickCudaDevice(index: int | None = None) -> torch.device:
 def getDevice(preference: str = "auto") -> torch.device:
     if preference == "auto":
         if torch.cuda.is_available():
-            return pickCudaDevice()
+            return _selectCudaDevice()
         
         if torch.backends.mps.is_available():
             return torch.device("mps")
@@ -47,4 +47,4 @@ def getDevice(preference: str = "auto") -> torch.device:
     if device.type != "cuda":
         return device
 
-    return pickCudaDevice(device.index)
+    return _selectCudaDevice(device.index)
