@@ -14,15 +14,10 @@ from rasterio.features import rasterize
 from shapely.validation import make_valid
 from shapely.geometry import Polygon, box
 from shapely.affinity import affine_transform
+from geo import getSamplingScales, getWindowOrigins
 from rasterio.windows import bounds as window_bounds
-from geo import BUILDINGS_GEOJSON, DATA_DIR, MIN_GSD_M, TILE_SIZE, getSamplingScales, getWindowOrigins
 
-SEED = 42
-OVERLAP = 128
-NEGATIVE_RATIO = 0.5
-IMAGE_NAME_COLUMN = 'image_name'
-MAX_BLANK_FRACTION = 0.5
-MIN_INSTANCE_AREA_PX = 24
+from config import IMAGE_NAME_COLUMN, NEGATIVE_RATIO, MAX_BLANK_FRACTION, MIN_INSTANCE_AREA_PX
 
 def getMaskOutline(mask: np.ndarray) -> np.ndarray:
     edges = np.zeros_like(mask, dtype=bool)
@@ -45,10 +40,7 @@ def writeAlignmentCheck(tiles_dir: Path, record: dict, output_path: Path) -> Non
     Image.fromarray(overlay).save(output_path)
     print(f'Check "{output_path.name}" ({record["image"]}, {len(record["polygons"])} buildings): the green outlines should sit on roof edges.')
 
-def loadTrainingBuildings(file_path: str = None) -> gpd.GeoDataFrame:
-    if file_path is None:
-        file_path = BUILDINGS_GEOJSON
-
+def loadTrainingBuildings(file_path: Path) -> gpd.GeoDataFrame:
     if not file_path.exists():
         raise SystemExit(f"missing footprints: {file_path}")
 
@@ -67,9 +59,9 @@ def loadTrainingBuildings(file_path: str = None) -> gpd.GeoDataFrame:
 
     return footprints
 
-def getImagePath(image_name: str, image_folder: str = None):
-    if image_folder is None:
-        image_folder = DATA_DIR
+def getImagePath(image_name: str, image_folder: Path = None):
+    if not image_folder.exists():
+        raise SystemExit(f"missing image path: {image_folder}")
     
     image_path = image_folder / f"{image_name}.tif"
     if image_path.exists():
@@ -89,12 +81,12 @@ def pairImagesWithFootprints(buildings: gpd.GeoDataFrame, image_folder: str = No
         pairs.append((tif_path, subset.reset_index(drop=True)))
 
     if missing:
-        print(f"warning: {len(missing)} image_name value(s) have no matching .tif under {DATA_DIR.name}/:")
+        print(f"warning: {len(missing)} image_name value(s) have no matching .tif /:")
         for name in missing:
             print(f"  - {name}")
 
     if not pairs:
-        raise SystemExit(f"No imagery matched the '{IMAGE_NAME_COLUMN}' values in {BUILDINGS_GEOJSON.name}. Expected files like {DATA_DIR / '<image_name>.tif'}.")
+        raise SystemExit(f"No imagery matched the '{IMAGE_NAME_COLUMN}' values. Expected files like '<image_name>.tif'.")
 
     return pairs
 
@@ -177,14 +169,16 @@ def tilePolygons(gdf, spatial_index, tile_geom, tile_transform, size) -> list[li
         for part in parts:
             if not isinstance(part, Polygon) or part.area < MIN_INSTANCE_AREA_PX:
                 continue
+            
             polygons.append([getRingCoords(part.exterior)] + [getRingCoords(r) for r in part.interiors])
+    
     return polygons
 
 def stretch2uint8(array: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.ndarray:
     scaled = (array.astype(np.float32) - low[:, None, None]) / np.maximum((high - low)[:, None, None], 1e-6)
     return (np.clip(scaled, 0, 1) * 255).astype(np.uint8)
 
-def readImageTile(src, window, band_indexes, stretch, tile_size: int = TILE_SIZE) -> np.ndarray | None:
+def readImageTile(src, window, band_indexes, stretch, tile_size: int) -> np.ndarray | None:
     array = src.read(band_indexes, window=window, out_shape=(3, tile_size, tile_size), resampling=Resampling.bilinear, boundless=True, fill_value=0)
     if stretch is not None:
         array = stretch2uint8(array, *stretch)
@@ -194,7 +188,7 @@ def readImageTile(src, window, band_indexes, stretch, tile_size: int = TILE_SIZE
 
     return array
 
-def writeImageTile(tiles_dir: Path, tif_path, array, transform, crs, polygons, records: list[dict], x0, y0, gsd_m, tile_size: int = TILE_SIZE) -> None:
+def writeImageTile(tiles_dir: Path, tif_path, array, transform, crs, polygons, records: list[dict], x0, y0, gsd_m, tile_size: int) -> None:
     name = f"{tif_path.stem}_{round(x0):05d}_{round(y0):05d}.png"
     Image.fromarray(np.moveaxis(array, 0, -1)).save(tiles_dir / "images" / name)
     records.append(
@@ -209,7 +203,7 @@ def writeImageTile(tiles_dir: Path, tif_path, array, transform, crs, polygons, r
         }
     )
 
-def tileImage(tiles_dir: Path, tif_path, footprints: gpd.GeoDataFrame, records: list[dict], tile_size: int = TILE_SIZE, overlap: int = OVERLAP, gsd_m: float = MIN_GSD_M) -> None:
+def tileImage(tiles_dir: Path, tif_path, footprints: gpd.GeoDataFrame, records: list[dict], tile_size: int, overlap: int, gsd_m: float, seed: int) -> None:
     with rasterio.open(tif_path) as src:
         scale_x, scale_y, target_gsd = getSamplingScales(src, gsd_m)
         footprints = transformFootprints(footprints, src)
@@ -241,47 +235,17 @@ def tileImage(tiles_dir: Path, tif_path, footprints: gpd.GeoDataFrame, records: 
                 writeImageTile(tiles_dir, tif_path, array, transform, src.crs.to_string(), polygons, records, x0, y0, target_gsd, tile_size)
 
         n_positive = len(records) - positives_before
-        rng = random.Random(SEED)
+        rng = random.Random(seed)
         rng.shuffle(negatives)
         quota = min(len(negatives), max(1, int(round(n_positive * NEGATIVE_RATIO))))
         for x0, y0, window, transform in negatives[:quota]:
             array = readImageTile(src, window, band_indexes, stretch, tile_size)
             if array is None:
                 continue
+            
             writeImageTile(tiles_dir, tif_path, array, transform, src.crs.to_string(), [], records, x0, y0, target_gsd, tile_size)
 
-def executeTiling(tiles_dir: Path, tile_index: Path, alignment_path: Path | None = None) -> list[dict]:
-    if not DATA_DIR.is_dir():
-        raise SystemExit(f"missing imagery directory: {DATA_DIR}")
-
-    buildings = loadTrainingBuildings()
-    tif_building_pairs = pairImagesWithFootprints(buildings)
-    print(f"Training data: {BUILDINGS_GEOJSON.name} ({len(buildings)} buildings -> {len(tif_building_pairs)} images)")
-
-    if tiles_dir.exists():
-        shutil.rmtree(tiles_dir)
-    (tiles_dir / "images").mkdir(parents=True)
-
-    records: list[dict] = []
-    for tif_path, footprints in tqdm(tif_building_pairs, desc="Tiling training dataset images", ncols=100):
-        tileImage(tiles_dir, tif_path, footprints, records)
-
-    if not records:
-        raise SystemExit("No tiles were written - check the alignment warnings above.")
-
-    tile_index.write_text(json.dumps(records))
-    positives = sum(1 for record in records if record["polygons"])
-    negatives = len(records) - positives
-    instances = sum(len(record["polygons"]) for record in records)
-    print(f"\nWrote {len(records)} tiles ({positives} with buildings, {negatives} empty) and {instances} building instances to {tiles_dir.name}")
-
-    if alignment_path is not None:
-        labeled = [record for record in records if record["polygons"]]
-        writeAlignmentCheck(tiles_dir, random.choice(labeled), alignment_path)
-
-    return records
-
-def generateTiles(images_dir: Path, detection_file: Path, tiles_dir: Path, tile_index_file: Path, tile_size: int, overlap: int, gsd_m: float):
+def generateTiles(images_dir: Path, detection_file: Path, tiles_dir: Path, tile_index_file: Path, tile_size: int, overlap: int, gsd_m: float, seed: int):
     if not images_dir.is_dir():
         raise SystemExit(f'invalid "images_dir": {images_dir}')
 
@@ -295,7 +259,7 @@ def generateTiles(images_dir: Path, detection_file: Path, tiles_dir: Path, tile_
     
     records: list[dict] = []
     for tif_path, footprints in tqdm(tif_building_pairs, desc="Generate Tiles", ncols=100, postfix=f'tz: {tile_size}, op: {overlap}, gsd: {gsd_m}'):
-        tileImage(tiles_dir, tif_path, footprints, records, tile_size, overlap, gsd_m)
+        tileImage(tiles_dir, tif_path, footprints, records, tile_size, overlap, gsd_m, seed)
 
     if not records:
         raise SystemExit("No tiles were written - check the alignment warnings above.")
@@ -323,7 +287,7 @@ def yoloLabelLines(record: dict) -> list[str]:
     
     return lines
 
-def generateDataYML(tile_index: dict, tiles_dir: Path, dataset_dir: Path, data_file: Path, validation_fraction: float, seed: int = SEED):
+def generateDataYAML(tile_index: dict, tiles_dir: Path, dataset_dir: Path, data_file: Path, validation_fraction: float, seed: int):
     rng = random.Random(seed)
     shuffled = list(tile_index)
     rng.shuffle(shuffled)
