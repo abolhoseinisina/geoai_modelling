@@ -10,7 +10,6 @@ from pathlib import Path
 from rasterio.windows import Window
 from rasterio.transform import Affine
 from rasterio.enums import Resampling
-from rasterio.features import rasterize
 from shapely.validation import make_valid
 from shapely.geometry import Polygon, box
 from shapely.affinity import affine_transform
@@ -24,21 +23,6 @@ def getMaskOutline(mask: np.ndarray) -> np.ndarray:
     edges[1:, :] |= mask[1:, :] ^ mask[:-1, :]
     edges[:, 1:] |= mask[:, 1:] ^ mask[:, :-1]
     return edges
-
-def writeAlignmentCheck(tiles_dir: Path, record: dict, output_path: Path) -> None:
-    image = np.array(Image.open(tiles_dir / record["image"]).convert("RGB"))
-    mask = np.zeros(image.shape[:2], dtype=bool)
-    for rings in record["polygons"]:
-        polygon = Polygon(rings[0], rings[1:])
-        mask |= rasterize([(polygon, 1)], out_shape=image.shape[:2], dtype="uint8").astype(bool)
-
-    overlay = image.copy()
-    overlay[mask] = (0.6 * overlay[mask] + 0.4 * np.array([255, 40, 40])).astype(np.uint8)
-    overlay[getMaskOutline(mask)] = [0, 255, 0]
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(overlay).save(output_path)
-    print(f'Check "{output_path.name}" ({record["image"]}, {len(record["polygons"])} buildings): the green outlines should sit on roof edges.')
 
 def loadTrainingBuildings(file_path: Path) -> gpd.GeoDataFrame:
     if not file_path.exists():
