@@ -145,9 +145,9 @@ def main():
     results = []
     for tile_size in TILE_SIZES:
         for overlap in OVERLAPS:
-            training_tile_index = generateTiles(TRAINING_IMAGES_DIR, TRAINING_DETECTION_FILE, TRAINING_TILES_DIR, TRAINING_TILE_INDEX_FILE, tile_size, overlap, gsd_m=config['gsd_minimum'])
+            training_tile_index = generateTiles(TRAINING_IMAGES_DIR, TRAINING_DETECTION_FILE, TRAINING_TILES_DIR, TRAINING_TILE_INDEX_FILE, tile_size, overlap, gsd_m=config['gsd_minimum'], seed=SEED)
             training_data_file = generateDataYAML(training_tile_index, TRAINING_TILES_DIR, TRAINING_DATASET_DIR, TRAINING_DATASET_FILE, 0.2, SEED)
-            validation_tile_index = generateTiles(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE, tile_size, overlap, gsd_m=config['gsd_minimum'])
+            validation_tile_index = generateTiles(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE, tile_size, overlap, gsd_m=config['gsd_minimum'], seed=SEED)
             for model_type in MODEL_TYPES:
                 model = train(model_type, config[model_type], training_tile_index, TRAINING_TILES_DIR, training_data_file, tile_size, OUTPUT_MODELS_DIR)
 
