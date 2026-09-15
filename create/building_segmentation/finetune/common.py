@@ -222,8 +222,8 @@ def applyModel2Raster(model, raster, tiles, validation_tiles_dir, truth_by_sourc
     iou, dice = getIoUDice(predicted, ground_truth)
     return ground_truth, predicted, recall, precision, true_positives, false_positives, iou, dice
 
-def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, score_threshold, tile_size: int, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
-    model = buildModel(weights_path=model, num_classes=2, image_size=tile_size)
+def validateMaskRCNNModel(model_path, validation_tiles_dir, validation_tile_index, device, score_threshold, tile_size: int, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
+    model = buildModel(weights_path=model_path, num_classes=2, image_size=tile_size)
     model.to(device).eval()
     
     validation_df = pd.DataFrame(validation_tile_index)
