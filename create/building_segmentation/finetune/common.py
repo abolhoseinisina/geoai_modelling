@@ -64,7 +64,7 @@ def _getLRSchedule(total_steps: int, warmup_steps: int):
 
     return factor
 
-def _convertMask2Polygonpx(mask: np.ndarray) -> list[tuple[float, float]] | None:
+def convertMask2Polygonpx(mask: np.ndarray) -> list[tuple[float, float]] | None:
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
@@ -110,7 +110,7 @@ def _applyModel2Tile(model, image_chw: torch.Tensor, device, score_threshold) ->
         y1, y2 = max(y1, 0), min(y2, mask.shape[0])
         x1, x2 = max(x1, 0), min(x2, mask.shape[1])
         cropped[y1:y2, x1:x2] = mask[y1:y2, x1:x2]
-        ring = _convertMask2Polygonpx(cropped)
+        ring = convertMask2Polygonpx(cropped)
         if ring is None:
             continue
 

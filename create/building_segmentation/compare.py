@@ -15,7 +15,7 @@ from device import getDevice
 from nms import performNMS, georeferencePolygon
 from train.yolo.common import validateYOLOModel
 from finetune.common import validateMaskRCNNModel
-from finetune.common import _convertMask2Polygonpx
+from finetune.common import convertMask2Polygonpx
 from accuracy import getPrecisionRecall, getIoUDice
 from tiling import generateTiles, loadGroundTruthBySource
 from config import getFinalModelConfig, SEED, VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE
@@ -156,7 +156,7 @@ def applyMaskRCNNOnnx(session, validation_tiles_dir: Path, validation_tile_index
                 y1c, y2c = max(y1, 0), min(y2, binary.shape[0])
                 x1c, x2c = max(x1, 0), min(x2, binary.shape[1])
                 cropped[y1c:y2c, x1c:x2c] = binary[y1c:y2c, x1c:x2c]
-                ring = _convertMask2Polygonpx(cropped)
+                ring = convertMask2Polygonpx(cropped)
                 if ring is None:
                     continue
                 

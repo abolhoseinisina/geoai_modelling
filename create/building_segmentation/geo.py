@@ -1,5 +1,5 @@
-from rasterio.warp import transform as transform_coordinates
 from config import GEOD
+from rasterio.warp import transform as transform_coordinates
 
 def getRasterResolution(raster) -> tuple[float, float]:
     if raster.crs is None:
