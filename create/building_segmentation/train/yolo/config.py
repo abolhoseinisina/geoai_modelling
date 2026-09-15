@@ -1,54 +1,22 @@
-import torch
-import argparse
-from dataclasses import dataclass
+class YOLOConfig:
+    def __init__(self, device: str):
+        if device == 'mac':
+            self.name = 'mac'
+            self.device = 'mps'
+            self.epochs = 1
+            self.batch_size = 2
+            self.model = "yolo26n-seg.pt"
+            self.workers = 0
+            self.patience = 1
 
-@dataclass(frozen=True)
-class RunConfig:
-    name: str
-    device: str
-    epochs: int
-    batch_size: int
-    imgsz: int
-    model: str
-    workers: int
-    patience: int
+        elif device == 'pc':
+            self.name = 'pc'
+            self.device = 'cuda'
+            self.epochs = 80
+            self.batch_size = 8
+            self.model = "yolo26x-seg.pt"
+            self.workers = 4
+            self.patience = 20
 
-MAC = RunConfig(
-    name="mac",
-    device="mps",
-    epochs=1,
-    batch_size=2,
-    imgsz=512,
-    model="yolo26n-seg.pt",
-    workers=0,
-    patience=1,
-)
-
-PC = RunConfig(
-    name="pc",
-    device="cuda",
-    epochs=80,
-    batch_size=8,
-    imgsz=512,
-    model="yolo26l-seg.pt",
-    workers=4,
-    patience=20,
-)
-
-CONFIGS = {"mac": MAC, "pc": PC}
-
-def defaultConfigName() -> str:
-    return "pc" if torch.cuda.is_available() else "mac"
-
-def getConfig(name: str | None = None) -> RunConfig:
-    key = name or defaultConfigName()
-    if key not in CONFIGS:
-        raise SystemExit(f"unknown config '{key}'. choose one of: {', '.join(CONFIGS)}")
-    
-    return CONFIGS[key]
-
-def parseConfig() -> RunConfig:
-    parser = argparse.ArgumentParser(description="Train YOLO building-footprint segmentation")
-    parser.add_argument("--config", choices=tuple(CONFIGS), default=None, help="mac: M4 smoke test. pc: CUDA training. default: pc if CUDA is available, else mac.")
-    
-    return getConfig(parser.parse_args().config)
+        else:
+            raise ValueError('Invalid "device" parameter.')
