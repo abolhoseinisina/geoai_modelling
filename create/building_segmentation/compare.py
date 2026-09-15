@@ -1,114 +1,118 @@
-import sys
 import cv2
-import random
-import rasterio
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from PIL import Image
 import geopandas as gpd
 from pathlib import Path
 import onnxruntime as ort
 from ultralytics import YOLO
-from PIL import Image, ImageDraw
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from rasterio.windows import Window
-from rasterio.transform import Affine
-from rasterio.enums import Resampling
-from shapely.geometry import Polygon, box
-from shapely.ops import unary_union
+from shapely.geometry import Polygon
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-FINE_TUNE = HERE / "fine_tune"
-if str(FINE_TUNE) not in sys.path:
-    sys.path.insert(0, str(FINE_TUNE))
-
-from geo import MIN_GSD_M, TILE_SIZE, getSamplingScales, getWindowOrigins
 from device import getDevice
-from tiling import getRGBStretchBounds, loadTrainingBuildings, pairImagesWithFootprints, stretch2uint8, transformFootprints
-from common import buildModel
-from compare_models import MASK_THRESH, MAX_AREA_M2, MIN_AREA_M2, NMS_IOU, OVERLAP, SCORE_THRESH, applyModel2Raster, convertMask2Polygonpx, convertPixelToPolygon, getPolygonIoU, performNMS
+from nms import performNMS, georeferencePolygon
+from train.yolo.common import validateYOLOModel
+from finetune.common import validateMaskRCNNModel
+from finetune.common import _convertMask2Polygonpx
+from accuracy import getPrecisionRecall, getIoUDice
+from tiling import generateTiles, loadGroundTruthBySource
+from config import getFinalModelConfig, SEED, VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE
 
 IOU_THRESH = 0.5
 OVERVIEW_SIZE = 1400
-OUT_DIR = HERE / "output/compare"
+OUT_DIR = "output/compare_models"
 BLANK_FRACTION = 0.6
-REPO = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = REPO / "validation_dataset/building_segmentation_202608"
-BUILDINGS_GEOJSON = DATA_DIR / "validation_buildings.geojson"
-
-# DATA_DIR = REPO / "training_dataset/building_segmentation_202608"
-# BUILDINGS_GEOJSON = DATA_DIR / "training_buildings.geojson"
 
 @dataclass(frozen=True)
 class ModelSpec:
     name: str
     path: Path
-    kind: str
-    tile_size: int = TILE_SIZE
-    gsd_m: float = MIN_GSD_M
-    overlap_px: int = OVERLAP
-    seg_thresh: float = MASK_THRESH
-    min_segment_px: int = 11
-
+    model_type: str
+    tile_size: int
+    overlap: int
+    gsd_m: float
 
 MODELS = [
-    ModelSpec("pretrained_maskrcnn", HERE.parent.parent / "models/building_footprints_usa.pth", "maskrcnn_pth", gsd_m=0.25),
-    ModelSpec("finetuned_maskrcnn_20ep", HERE / "models/finetuned_building_footprints_usa.onnx", "maskrcnn_onnx"),
-    ModelSpec("yolo_80ep", HERE / "models/yolo_80ep.onnx", "yolo_onnx"),
-    ModelSpec("ramp_xunet", HERE.parent.parent / "models/buildings_ramp_XUnet_256.onnx", "xunet_onnx", tile_size=256, gsd_m=0.50, overlap_px=13, seg_thresh=0.5, min_segment_px=11),
+    ModelSpec("MASK-RCNN", Path("../../models/building_footprints_usa.pth"), "MASK-RCNN", tile_size=640, overlap=64, gsd_m=0.25),
+    ModelSpec("FINE-TUNED MASK-RCNN", Path("output/models/finetune/finetuned_building_footprints_usa_1ep_20260911.pth"), "MASK-RCNN", tile_size=640, overlap=64, gsd_m=0.1),
+    ModelSpec("FINE-TUNED MASK-RCNN (ONNX)", Path("models/finetuned_building_footprints_usa.onnx"), "MASK-RCNN-ONNX", tile_size=640, overlap=64, gsd_m=0.1),
+    ModelSpec("YOLO", Path("output/models/train/weights/best.pt"), "YOLO", tile_size=640, overlap=64, gsd_m=0.1),
+    ModelSpec("YOLO (ONNX)", Path("models/yolo_80ep.onnx"), "YOLO-ONNX", tile_size=512, overlap=64, gsd_m=0.1),
+    ModelSpec("RAMP XUNET (ONNX)", Path("../../models/buildings_ramp_XUnet_256.onnx"), "XUNET-ONNX", tile_size=256, overlap=13, gsd_m=0.50),
 ]
 
+def getEnvs(results: pd.DataFrame):
+    envs = {
+        'crop_0': 'mixed',
+        'crop_1': 'tall',
+        'crop_2': 'wide',
+        'crop_3': 'residential',
+    }
+
+    def get_env(source: str):
+        for name, env in envs.items():
+            if name in source:
+                return env
+        
+        return None
+
+    results['env'] = results['source'].apply(get_env)
+    return results
+
+def plotHeatmapPerModelEnv(results, column_names: list[str], title: str):
+    envs = sorted(results['env'].unique())
+    models = sorted(results['model'].unique())
+
+    cmap = plt.get_cmap("YlGnBu")
+    fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
+    for idx, column_name in enumerate(column_names):
+        heatmap_data = results.pivot_table(index='model', columns='env', values=column_name, aggfunc='mean')
+        heatmap_data = heatmap_data.reindex(index=models, columns=envs)
+        heatmap_values = heatmap_data.values
+        ax = axes[idx]
+        im = ax.imshow(heatmap_values, aspect="auto", cmap=cmap, vmin=np.nanmin(heatmap_values), vmax=np.nanmax(heatmap_values))
+        ax.set_xticks(np.arange(len(envs)))
+        ax.set_yticks(np.arange(len(models)))
+        ax.set_xticklabels(envs)
+        ax.set_yticklabels(models if idx == 1 else [""]*len(models))
+        ax.set_xlabel('Environment')
+        if idx == 0:
+            ax.set_ylabel('Model')
+        
+        for i in range(len(models)):
+            for j in range(len(envs)):
+                val = heatmap_values[i, j]
+                text = f"{val:.2f}" if not np.isnan(val) else "NA"
+                ax.text(j, i, text, ha="center", va="center", color="black" if np.isnan(val) or val < (np.nanmax(heatmap_values) * 0.7) else "white", fontsize=10)
+        
+        ax.set_title(column_name)
+        if idx == 2:
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=title)
+    
+    plt.suptitle(f"{title} Heatmap")
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(f'output/models/compare_per_model_per_env.jpg', dpi=300)
+    plt.close()
+
+def drawComparisonChart(file_path):
+    comparison_results = pd.read_csv(file_path, index_col=0)
+    results = getEnvs(comparison_results)
+    
+    results['f1'] = 2 * (results['precision'] * results['recall']) / (results['precision'] + results['recall'])
+    results['f1'] = results['f1'].fillna(0)
+    results['f1_weighted'] = results['f1'] * results['actual']
+    
+    plotHeatmapPerModelEnv(results, ['f1', 'dice', 'iou'], 'Compare Models')
 
 def ortSession(path: Path):
     providers = ["CPUExecutionProvider"]
     available = ort.get_available_providers()
     if "CUDAExecutionProvider" in available:
         providers.insert(0, "CUDAExecutionProvider")
+
     return ort.InferenceSession(str(path), providers=providers)
-
-
-def iterateTiles(src, tile_size: int, gsd_m: float = MIN_GSD_M, overlap_px: int = OVERLAP):
-    scale_x, scale_y, target_gsd = getSamplingScales(src, gsd_m)
-    source_width = tile_size * scale_x
-    source_height = tile_size * scale_y
-    band_indexes = [1, 2, 3] if src.count >= 3 else [1, 1, 1]
-    stretch = getRGBStretchBounds(src, band_indexes)
-    xs = getWindowOrigins(src.width, source_width, (tile_size - overlap_px) * scale_x)
-    ys = getWindowOrigins(src.height, source_height, (tile_size - overlap_px) * scale_y)
-    for y0 in ys:
-        for x0 in xs:
-            window = Window(x0, y0, source_width, source_height)
-            transform = src.window_transform(window) * Affine.scale(scale_x, scale_y)
-            array = src.read(band_indexes, window=window, out_shape=(3, tile_size, tile_size), resampling=Resampling.bilinear, boundless=True, fill_value=0)
-            if stretch is not None:
-                array = stretch2uint8(array, *stretch)
-            if (array.max(axis=0) == 0).mean() > BLANK_FRACTION:
-                continue
-            yield array, transform, target_gsd
-
-
-def georeferencePolygon(poly_px: Polygon, transform, target_gsd: float) -> Polygon | None:
-    """Filter a tile-pixel polygon by ground area, then project it into the raster CRS.
-
-    The area test has to happen in pixel space: the rasters are EPSG:4326, so
-    polygon area in map units is degrees squared, not metres squared.
-    """
-    if poly_px is None or poly_px.is_empty:
-        return None
-
-    area_m2 = poly_px.area * target_gsd**2
-    if area_m2 < MIN_AREA_M2 or area_m2 > MAX_AREA_M2:
-        return None
-
-    poly_map = convertPixelToPolygon(poly_px, transform)
-    if poly_map.is_empty or not poly_map.is_valid:
-        return None
-
-    return poly_map
-
 
 def polygonsFromMask(mask: np.ndarray, min_area_px: float = 16) -> list[Polygon]:
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -123,58 +127,72 @@ def polygonsFromMask(mask: np.ndarray, min_area_px: float = 16) -> list[Polygon]
         polygons.append(Polygon([(float(x), float(y)) for x, y in approx.reshape(-1, 2)]))
     return polygons
 
-
-def detectionsToFrame(polygons: list[Polygon], scores: list[float], crs) -> gpd.GeoDataFrame:
-    if not polygons:
-        return gpd.GeoDataFrame({"score": []}, geometry=[], crs=crs)
-    
-    keep = performNMS(polygons, scores, NMS_IOU)
-    return gpd.GeoDataFrame({"score": [scores[i] for i in keep]}, geometry=[polygons[i] for i in keep], crs=crs)
-
-
-def applyMaskRcnnOnnx(session, src, verbose: bool = True) -> gpd.GeoDataFrame:
+def applyMaskRCNNOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
+    mask_threshold = 0.5
     input_name = session.get_inputs()[0].name
-    polygons: list[Polygon] = []
-    scores: list[float] = []
-    raw_detections = 0
-    for array, transform, target_gsd in iterateTiles(src, TILE_SIZE, gsd_m=0.1):
-        image = array.astype(np.float32) / 255.0
-        boxes, _labels, det_scores, masks = session.run(None, {input_name: image})
-        if len(det_scores) == 0:
-            continue
-        keep = det_scores >= SCORE_THRESH
-        raw_detections += int(keep.sum())
-        for mask, score, box in zip(masks[keep], det_scores[keep], boxes[keep]):
-            mask_2d = mask[0] if mask.ndim == 3 else mask
-            binary = mask_2d > MASK_THRESH
-            x1, y1, x2, y2 = [int(v) for v in box]
-            cropped = np.zeros_like(binary, dtype=np.uint8)
-            y1c, y2c = max(y1, 0), min(y2, binary.shape[0])
-            x1c, x2c = max(x1, 0), min(x2, binary.shape[1])
-            cropped[y1c:y2c, x1c:x2c] = binary[y1c:y2c, x1c:x2c]
-            ring = convertMask2Polygonpx(cropped)
-            if ring is None:
-                continue
+    validation_df = pd.DataFrame(validation_tile_index)
+    results = []
+    for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate MASK-RCNN-ONNX', ncols=100):
+        polygons: list[Polygon] = []
+        scores: list[float] = []
+        for _, tile in tiles.iterrows():
+            image_path = validation_tiles_dir / tile['image']
+            rgb = np.array(Image.open(image_path).convert("RGB"))
+            image = rgb.astype(np.float32) / 255.0   # (H, W, C)
+            image = np.transpose(image, (2, 0, 1))   # (C, H, W)
+            boxes, _labels, det_scores, masks = session.run(None, {input_name: image})
             
-            poly_map = georeferencePolygon(Polygon(ring), transform, target_gsd)
-            if poly_map is not None:
-                polygons.append(poly_map)
-                scores.append(float(score))
+            if len(det_scores) == 0:
+                continue
+   
+            for mask, score, box in zip(masks, det_scores, boxes):
+                if score < score_threshold:
+                    continue
+            
+                mask_2d = mask[0] if mask.ndim == 3 else mask
+                binary = mask_2d > mask_threshold
+                x1, y1, x2, y2 = [int(v) for v in box]
+                cropped = np.zeros_like(binary, dtype=np.uint8)
+                y1c, y2c = max(y1, 0), min(y2, binary.shape[0])
+                x1c, x2c = max(x1, 0), min(x2, binary.shape[1])
+                cropped[y1c:y2c, x1c:x2c] = binary[y1c:y2c, x1c:x2c]
+                ring = _convertMask2Polygonpx(cropped)
+                if ring is None:
+                    continue
+                
+                poly_map = georeferencePolygon(Polygon(ring), tile['transform'])
+                if poly_map is not None:
+                    polygons.append(poly_map)
+                    scores.append(float(score))
+
+        keep = performNMS(polygons, scores, nms_iou_thresh)
+        predicted = [polygons[i] for i in keep]
+        ground_truth = truth_by_source.get(raster, [])
+        recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
+        iou, dice = getIoUDice(predicted, ground_truth)
+        results.append({
+            'source': raster,
+            'actual': len(ground_truth),
+            'predicted': len(predicted),
+            'recall': recall,
+            'precision': precision,
+            'true_positives': true_positives,
+            'false_positives': false_positives,
+            'iou': iou,
+            'dice': dice,
+        })
     
-    if verbose: print(f"  raw detections: {raw_detections}  kept after area filter: {len(polygons)}")
-    return detectionsToFrame(polygons, scores, src.crs)
-
-
+    return results
+    
 def buildingProbability(raw: np.ndarray) -> np.ndarray:
-    """Reduce a semantic-segmentation output to a single building probability map."""
     pred = np.squeeze(raw).astype(np.float32)
     if pred.ndim == 3:
-        # Channel-last outputs come back as (H, W, C); move the class axis first.
         if pred.shape[-1] <= 4 and pred.shape[0] > 4:
             pred = np.moveaxis(pred, -1, 0)
 
         if pred.shape[0] == 1:
             pred = pred[0]
+        
         else:
             shifted = pred - pred.max(axis=0, keepdims=True)
             exponentiated = np.exp(shifted)
@@ -185,334 +203,106 @@ def buildingProbability(raw: np.ndarray) -> np.ndarray:
 
     return pred
 
-
-def applyXunetOnnx(session, src, spec: "ModelSpec", verbose: bool = True) -> gpd.GeoDataFrame:
-    inp = session.get_inputs()[0]
-    input_name = inp.name
-    tile_size = spec.tile_size
-    dims = [d if isinstance(d, int) and d > 0 else None for d in inp.shape]
-    if len(dims) == 4 and dims[2]:
-        tile_size = dims[2]
-
-    polygons: list[Polygon] = []
-    scores: list[float] = []
-    positive_tiles = 0
+def applyXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, gsd_m: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float) -> gpd.GeoDataFrame:
     peak = 0.0
-    target_gsd = spec.gsd_m
-    for array, transform, target_gsd in iterateTiles(src, tile_size, spec.gsd_m, spec.overlap_px):
-        image = array.astype(np.float32) / 255.0
-        if len(inp.shape) == 4:
-            image = image[None, ...]
-
-        pred = buildingProbability(session.run(None, {input_name: image})[0])
-        peak = max(peak, float(pred.max()))
-        binary = (pred > spec.seg_thresh).astype(np.uint8)
-        if not binary.any():
-            continue
-
-        positive_tiles += 1
-        for poly_px in polygonsFromMask(binary, spec.min_segment_px):
-            poly_map = georeferencePolygon(poly_px, transform, target_gsd)
-            if poly_map is not None:
-                polygons.append(poly_map)
-                scores.append(1.0)
-
-    if verbose: print(f"  tiles with mask: {positive_tiles}  peak probability: {peak:.3f}  gsd={target_gsd * 100:.0f} cm/px  tile={tile_size}")
-    return detectionsToFrame(polygons, scores, src.crs)
-
-
-def applyYoloOnnx(path: Path, src, verbose: bool = True) -> gpd.GeoDataFrame:
-    model = YOLO(str(path), task='segment')
-    polygons: list[Polygon] = []
-    scores: list[float] = []
-    raw_detections = 0
-    peak = 0.0
-    # Predict well below SCORE_THRESH so we can report the peak confidence even
-    # when nothing clears the bar, which distinguishes a weak model from a bug.
-    for array, transform, target_gsd in iterateTiles(src, TILE_SIZE, gsd_m=0.1, overlap_px=192):
-        # Ultralytics reads numpy inputs as BGR, so hand it BGR rather than RGB.
-        bgr = np.moveaxis(array, 0, -1)[:, :, ::-1]
-        result = model.predict(bgr, imgsz=TILE_SIZE, conf=0.01, verbose=False)[0]
-        if result.masks is None or result.boxes is None:
-            continue
-        
-        for xy, score in zip(result.masks.xy, result.boxes.conf.cpu().numpy()):
-            peak = max(peak, float(score))
-            if score < SCORE_THRESH or len(xy) < 3:
+    seg_thresh = 0.5
+    min_segment_px = 11
+    
+    input = session.get_inputs()[0]
+    input_name = input.name
+    validation_df = pd.DataFrame(validation_tile_index)
+    results = []
+    for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate MASK-RCNN-ONNX', ncols=100):
+        polygons: list[Polygon] = []
+        scores: list[float] = []
+        for _, tile in tiles.iterrows():
+            image_path = validation_tiles_dir / tile['image']
+            rgb = np.array(Image.open(image_path).convert("RGB"))  # shape (H, W, C)
+            image = rgb.astype(np.float32) / 255.0  # normalize to 0-1, shape (H, W, C)
+            if image.shape[-1] == 3:  # channel last
+                image = np.transpose(image, (2, 0, 1))  # make it (C, H, W)
+            
+            image = image[None, ...]  # add batch dimension (1, C, H, W)
+            pred = buildingProbability(session.run(None, {input_name: image})[0])
+            peak = max(peak, float(pred.max()))
+            binary = (pred > seg_thresh).astype(np.uint8)
+            if not binary.any():
                 continue
             
-            raw_detections += 1
-            poly_map = georeferencePolygon(Polygon(xy), transform, target_gsd)
-            if poly_map is not None:
-                polygons.append(poly_map)
-                scores.append(float(score))
+            for poly_px in polygonsFromMask(binary, min_segment_px):
+                poly_map = georeferencePolygon(poly_px, tile['transform'])
+                if poly_map is not None:
+                    polygons.append(poly_map)
+                    scores.append(1.0)
+
+        keep = performNMS(polygons, scores, nms_iou_thresh)
+        predicted = [polygons[i] for i in keep]
+        ground_truth = truth_by_source.get(raster, [])
+        recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
+        iou, dice = getIoUDice(predicted, ground_truth)
+        results.append({
+            'source': raster,
+            'actual': len(ground_truth),
+            'predicted': len(predicted),
+            'recall': recall,
+            'precision': precision,
+            'true_positives': true_positives,
+            'false_positives': false_positives,
+            'iou': iou,
+            'dice': dice,
+        })
     
-    if verbose: print(f"  raw detections: {raw_detections}  kept after area filter: {len(polygons)}  peak confidence: {peak:.3f}")
-    if peak < SCORE_THRESH:
-        print(f"  no detection reached score>={SCORE_THRESH}: these weights are undertrained")
-    return detectionsToFrame(polygons, scores, src.crs)
+    return results
 
-def groundTruthPolygons(src, footprints: gpd.GeoDataFrame) -> list[Polygon]:
-    gdf = transformFootprints(footprints, src)
-    raster_box = box(*src.bounds)
-    polygons = []
-    for geom in gdf.geometry:
-        clipped = geom.intersection(raster_box)
-        if clipped.is_empty:
-            continue
-        parts = [clipped] if clipped.geom_type == "Polygon" else list(getattr(clipped, "geoms", []))
-        for part in parts:
-            if part.geom_type == "Polygon" and part.is_valid and not part.is_empty:
-                polygons.append(part)
-    return polygons
-
-
-def precisionRecall(predicted: list[Polygon], truth: list[Polygon], iou_thresh: float = IOU_THRESH) -> tuple[float, float, int, int]:
-    used = set()
-    true_positives = 0
-    for truth_poly in truth:
-        best_i, best_iou = -1, 0.0
-        for i, pred_poly in enumerate(predicted):
-            if i in used:
-                continue
-            iou = getPolygonIoU(truth_poly, pred_poly)
-            if iou > best_iou:
-                best_iou, best_i = iou, i
-        if best_iou >= iou_thresh:
-            true_positives += 1
-            used.add(best_i)
-    false_positives = max(len(predicted) - true_positives, 0)
-    recall = true_positives / max(len(truth), 1)
-    precision = true_positives / max(true_positives + false_positives, 1)
-    return recall, precision, true_positives, false_positives
-
-
-def iouDice(predicted: list[Polygon], truth: list[Polygon]) -> tuple[float, float]:
-    """Image-level IoU and Dice from the union of predicted vs ground-truth polygons."""
-    if not predicted and not truth:
-        return 1.0, 1.0
-    if not predicted or not truth:
-        return 0.0, 0.0
-
-    pred_union = unary_union(predicted)
-    truth_union = unary_union(truth)
-    if pred_union.is_empty or truth_union.is_empty:
-        return 0.0, 0.0
-
-    intersection = pred_union.intersection(truth_union).area
-    union = pred_union.union(truth_union).area
-    iou = intersection / union if union > 0 else 0.0
-    denom = pred_union.area + truth_union.area
-    dice = (2.0 * intersection / denom) if denom > 0 else 0.0
-    return iou, dice
-
-
-def drawOverview(src, truth: list[Polygon], frames: dict[str, gpd.GeoDataFrame], metrics: dict, out_path: Path) -> None:
-    scale = max(src.width, src.height) / OVERVIEW_SIZE
-    out_w = max(1, int(round(src.width / scale)))
-    out_h = max(1, int(round(src.height / scale)))
-    rgb = src.read([1, 2, 3], out_shape=(3, out_h, out_w), resampling=Resampling.bilinear)
-    base = np.moveaxis(rgb, 0, -1)
-    overview_transform = src.transform * rasterio.Affine.scale(scale)
-    inv = ~overview_transform
-
-    def drawPolys(panel, geoms, color):
-        draw = ImageDraw.Draw(panel, "RGBA")
-        fill = (*color, 70)
-        outline = (*color, 220)
-        for geom in geoms:
-            if geom is None or geom.is_empty:
-                continue
-            parts = [geom] if geom.geom_type == "Polygon" else list(geom.geoms)
-            for part in parts:
-                if part.geom_type != "Polygon":
-                    continue
-                pixels = [(inv.a * x + inv.b * y + inv.c, inv.d * x + inv.e * y + inv.f) for x, y in part.exterior.coords]
-                draw.polygon(pixels, fill=fill, outline=outline)
-
-    names = ["ground_truth", *frames]
-    colors = {
-        "ground_truth": (255, 220, 40),
-        "pretrained_maskrcnn": (255, 40, 40),
-        "ramp_xunet": (255, 40, 40),
-        "finetuned_maskrcnn_20ep": (255, 40, 40),
-        "yolo_80ep": (255, 40, 40),
-    }
-    panels = []
-    for name in names:
-        panel = Image.fromarray(base.copy())
-        geoms = truth if name == "ground_truth" else list(frames[name].geometry)
-        color = colors.get(name, (255, 255, 255))
-        drawPolys(panel, geoms, color)
-        label = f"{name}  n={len(geoms)}"
-        if name in metrics:
-            recall, precision, _, _ = metrics[name]
-            label += f"  R={recall:.3f}  P={precision:.3f}"
-        draw = ImageDraw.Draw(panel, "RGBA")
-        draw.rectangle([0, 0, out_w - 1, 28], fill=(0, 0, 0, 160))
-        from PIL import ImageFont
-
-        try:
-            font = ImageFont.truetype("arial.ttf", 40)
-        except OSError:
-            font = ImageFont.load_default(size=40)
-
-        draw.text((8, 6), label, fill=(255, 255, 255, 255), font=font)
-        panels.append(panel)
-
-    # Build a canvas with 3 rows and 2 panels in each row
-    n_cols = 2
-    n_rows = 3
-    padding = 8
-
-    canvas_width = (out_w * n_cols) + padding * (n_cols - 1)
-    canvas_height = (out_h * n_rows) + padding * (n_rows - 1)
-    canvas = Image.new("RGB", (canvas_width, canvas_height), (20, 20, 20))
-
-    for idx, panel in enumerate(panels):
-        row = idx // n_cols
-        col = idx % n_cols
-        if row >= n_rows:
-            break  # don't draw more than fits the rows*cols limit
-        x = col * (out_w + padding)
-        y = row * (out_h + padding)
-        canvas.paste(panel, (x, y))
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(out_path, quality=92)
-    print(f"wrote {out_path}")
-
-
-def runModel(spec: ModelSpec, src, device, verbose: bool = True) -> gpd.GeoDataFrame:
-    if verbose: print(f"\n=== {spec.name}: {spec.path.name} ({spec.kind}) ===")
-    if spec.kind == "maskrcnn_pth":
-        model = buildModel(weights_path=spec.path)
-        model.to(device).eval()
-        gdf = applyModel2Raster(model, src, device)
-        del model
-        return gdf
+def runModel(model_spec: ModelSpec, validation_tile_dir: str, validation_tile_index: dict, truth_by_source, device, nms_iou_threshold, accuracy_iou_threshold):
+    if model_spec.model_type == "MASK-RCNN":
+        return validateMaskRCNNModel(model_spec.path, validation_tile_dir, validation_tile_index, device, 0.5, model_spec.tile_size, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
-    elif spec.kind == "maskrcnn_onnx":
-        return applyMaskRcnnOnnx(ortSession(spec.path), src, verbose)
+    elif model_spec.model_type == "MASK-RCNN-ONNX":
+        session = ortSession(model_spec.path)
+        return applyMaskRCNNOnnx(session, validation_tile_dir, validation_tile_index, model_spec.tile_size, 0.5, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
-    elif spec.kind == "xunet_onnx":
-        return applyXunetOnnx(ortSession(spec.path), src, spec, verbose)
+    elif model_spec.model_type == "XUNET-ONNX":
+        session = ortSession(model_spec.path)
+        return applyXunetOnnx(session, validation_tile_dir, validation_tile_index, model_spec.tile_size, model_spec.gsd_m, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
-    elif spec.kind == "yolo_onnx":
-        return applyYoloOnnx(spec.path, src, verbose)
+    elif model_spec.model_type == "YOLO-ONNX":
+        model = YOLO(model_spec.path, task='segment', verbose=False)
+        return validateYOLOModel(model, validation_tile_dir, validation_tile_index, model_spec.tile_size, 0.5, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
-    raise SystemExit(f"unknown model kind: {spec.kind}")
-
-def getGSDs(pairs):
-    gsds = {}
-    for tif_path, _ in pairs:
-        with rasterio.open(tif_path) as src:
-            res_x, res_y = src.res
-            if src.crs and src.crs.is_projected:
-                gsd = abs(res_y)
-            else:
-                from rasterio.warp import calculate_default_transform
-                transform, width, height = calculate_default_transform(src.crs, "EPSG:3857", src.width, src.height, *src.bounds)
-                gsd = abs(transform.e)
-   
-            gsds[tif_path.stem] = round(gsd, 3)
+    elif model_spec.model_type == "YOLO":
+        model = YOLO(model_spec.path, task='segment')
+        return validateYOLOModel(model, validation_tile_dir, validation_tile_index, model_spec.tile_size, 0.5, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
-    return gsds
-
-def getEnvs(pairs):
-    envs = {
-        'crop_0': 'mixed',
-        'crop_1': 'tall',
-        'crop_2': 'wide',
-        'crop_3': 'residential',
-    }
-    
-    image_envs = {}
-    for tif_path, _ in pairs:
-        for env, type in envs.items():
-            if env in tif_path.stem:
-                image_envs[tif_path.stem] = type
-
-    return image_envs
+    else:
+        raise SystemExit(f"unknown model kind: {model_spec.kind}")
 
 def execute() -> None:
-    buildings = loadTrainingBuildings(BUILDINGS_GEOJSON)
-    pairs = pairImagesWithFootprints(buildings, DATA_DIR)
-    image_gsds = getGSDs(pairs)
-    image_env = getEnvs(pairs)
+    config = getFinalModelConfig()
     
-    tif_path, footprints = random.choice(pairs)
-    print(f"random image: {tif_path.name}  ({len(footprints)} labeled buildings)")
-    
-    available = [spec for spec in MODELS if spec.path.exists()]
+    available_models = [spec for spec in MODELS if spec.path.exists()]
     for spec in MODELS:
         if not spec.path.exists():
-            print(f"skip missing: {spec.name}")
-    if not available:
-        raise SystemExit("no model files found")
+            print(f"Warning: Skipping {spec.name}. Path does not exist: {spec.path}")
+    
+    if not available_models:
+        raise SystemExit("Error: No model files found.")
 
     device = getDevice("auto")
-    print(f"device={device}  score>={SCORE_THRESH}  iou>={IOU_THRESH}")
-
-    with rasterio.open(tif_path) as src:
-        truth = groundTruthPolygons(src, footprints)
-        print(f"imagery={src.width}x{src.height} crs={src.crs} polygons={len(truth)}")
-        frames: dict[str, gpd.GeoDataFrame] = {}
-        metrics: dict[str, tuple] = {}
-        print(f"{'model':<24} {'n_pred':>7} {'recall':>8} {'precision':>10}")
-        for spec in available:
-            gdf = runModel(spec, src, device)
-            predicted = [] if gdf.empty else [geom for geom in gdf.geometry if geom is not None and not geom.is_empty]
-            recall, precision, tp, fp = precisionRecall(predicted, truth)
-            frames[spec.name] = gdf
-            metrics[spec.name] = (recall, precision, tp, fp)
-            print(f"{spec.name:<24} {len(predicted):>7} {recall:>8.3f} {precision:>10.3f}")
-
-        drawOverview(src, truth, frames, metrics, OUT_DIR / f"{tif_path.stem}_comparison.png")
+    print(f"Device: {device}")
     
+    truth_by_source = loadGroundTruthBySource(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE)
     results = []
-    for tif_path, footprints in tqdm(pairs, desc='test on all images', ncols=100):
-        with rasterio.open(tif_path) as src:
-            truth = groundTruthPolygons(src, footprints)
-            for spec in available:
-                gdf = runModel(spec, src, device, False)
-                predicted = [] if gdf.empty else [geom for geom in gdf.geometry if geom is not None and not geom.is_empty]
-                recall, precision, _, _ = precisionRecall(predicted, truth)
-                iou, dice = iouDice(predicted, truth)
-                results.append({
-                    "image_name": tif_path.stem,
-                    "model": spec.name,
-                    "recall": recall,
-                    "precision": precision,
-                    "IoU": iou,
-                    "dice": dice,
-                })
-
-    results = pd.DataFrame(results, columns=["image_name", "model", "recall", "precision", "IoU", "dice"])
-    results["gsd"] = results["image_name"].map(image_gsds)
-    results["env"] = results["image_name"].map(image_env)
-    print("\nPer-image results:\n")
-    print(results.to_string(index=False))
+    for model_spec in available_models:
+        validation_tile_index = generateTiles(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE, model_spec.tile_size, model_spec.overlap, gsd_m=model_spec.gsd_m, seed=SEED)
+        model_results = runModel(model_spec, VALIDATING_TILES_DIR, validation_tile_index, truth_by_source, device, config['nms_iou_threshold'], config['accuracy_iou_threshold'])
+        for row in model_results:
+            row['model'] = model_spec.name
+            results.append(row)
     
-    mean_results = results.groupby("model")[["recall", "precision", "IoU", "dice"]].mean().reset_index()
-    print("\nMean metrics per model:\n")
-    print(mean_results.to_string(index=False))
-
-    mean_results = results.groupby("image_name")[["recall", "precision", "IoU", "dice"]].mean().reset_index()
-    print("\nMean metrics per image:\n")
-    print(mean_results.to_string(index=False))
-    
-    mean_results = results.groupby("env")[["recall", "precision", "IoU", "dice"]].mean().reset_index()
-    print("\nMean metrics per env:\n")
-    print(mean_results.to_string(index=False))
-
-    mean_results = results.groupby(["env", "model"])[["recall", "precision", "IoU", "dice"]].mean().reset_index()
-    print("\nMean metrics per env per model:\n")
-    print(mean_results.to_string(index=False))
-
-    mean_results = results.groupby("gsd")[["recall", "precision", "IoU", "dice"]].mean().reset_index()
-    print("\nMean metrics per gsd:\n")
-    print(mean_results.to_string(index=False))
+    results = pd.DataFrame(results, columns=["model", "source", "actual", "predicted", "recall", "precision", "true_positives", "false_positives", "iou", "dice"])
+    results.to_csv('output/models/comparison.csv')
+    drawComparisonChart('output/models/comparison.csv')
 
 if __name__ == "__main__":
     execute()
