@@ -286,38 +286,42 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
     model.load_state_dict(torch.load(output_model_path, map_location=device, weights_only=True))
     return output_model_path
 
-def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, score_threshold, tile_size: int, truth_by_source: dict[str, list[Polygon]]):
+def applyModel2Raster(model, raster, tiles, validation_tiles_dir, truth_by_source, device, score_threshold, nms_iou_thresh, accuracy_iou_thresh):
+    polygons: list[Polygon] = []
+    scores: list[float] = []
+    for _, tile in tiles.iterrows():
+        image_path = validation_tiles_dir / tile['image']
+        rgb = np.array(Image.open(image_path).convert("RGB"))
+        chw = np.transpose(rgb, (2, 0, 1))
+        tensor = torch.from_numpy(chw).float().div_(255)
+        result = _applyModel2Tile(model, tensor, device, score_threshold)
+        pixel_polys = []
+        pixel_scores = []
+        for poly_px, score in result:
+            if float(score) < score_threshold:
+                continue
+            pixel_polys.append(poly_px)
+            pixel_scores.append(float(score))
+
+        mapped, mapped_scores = georeferencePolygons(pixel_polys, pixel_scores, tile['transform'])
+        polygons.extend(mapped)
+        scores.extend(mapped_scores)
+
+    keep = performNMS(polygons, scores, nms_iou_thresh)
+    predicted = [polygons[i] for i in keep]
+    ground_truth = truth_by_source.get(raster, [])
+    recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
+    iou, dice = getIoUDice(predicted, ground_truth)
+    return ground_truth, predicted, recall, precision, true_positives, false_positives, iou, dice
+
+def validateMaskRCNNModel(model, validation_tiles_dir, validation_tile_index, device, score_threshold, tile_size: int, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
     model = buildModel(weights_path=model, num_classes=2, image_size=tile_size)
     model.to(device).eval()
     
     validation_df = pd.DataFrame(validation_tile_index)
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate Finetune', ncols=100):
-        polygons: list[Polygon] = []
-        scores: list[float] = []
-        for _, tile in tiles.iterrows():
-            image_path = validation_tiles_dir / tile['image']
-            rgb = np.array(Image.open(image_path).convert("RGB"))
-            chw = np.transpose(rgb, (2, 0, 1))
-            tensor = torch.from_numpy(chw).float().div_(255)
-            result = _applyModel2Tile(model, tensor, device, score_threshold)
-            pixel_polys = []
-            pixel_scores = []
-            for poly_px, score in result:
-                if float(score) < score_threshold:
-                    continue
-                pixel_polys.append(poly_px)
-                pixel_scores.append(float(score))
-
-            mapped, mapped_scores = georeferencePolygons(pixel_polys, pixel_scores, tile['transform'])
-            polygons.extend(mapped)
-            scores.extend(mapped_scores)
-
-        keep = performNMS(polygons, scores, NMS_IOU)
-        predicted = [polygons[i] for i in keep]
-        ground_truth = truth_by_source.get(raster, [])
-        recall, precision, true_positives, false_positives = _getPrecisionRecall(predicted, ground_truth)
-        iou, dice = _getIoUDice(predicted, ground_truth)
+        ground_truth, predicted, recall, precision, true_positives, false_positives, iou, dice = applyModel2Raster(model, raster, tiles, validation_tiles_dir, truth_by_source, device, score_threshold, nms_iou_thresh, accuracy_iou_thresh)
         results.append({
             'source': raster,
             'actual': len(ground_truth),
