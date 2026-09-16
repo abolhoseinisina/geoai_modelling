@@ -19,11 +19,6 @@ from tiling import generateTiles, loadGroundTruthBySource
 from finetune.utils import validateMaskRCNNModel, convertMask2Polygonpx
 from config import getFinalModelConfig, SEED, VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE
 
-IOU_THRESH = 0.5
-OVERVIEW_SIZE = 1400
-OUT_DIR = "output/compare_models"
-BLANK_FRACTION = 0.6
-
 @dataclass(frozen=True)
 class ModelSpec:
     name: str
