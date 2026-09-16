@@ -215,7 +215,7 @@ def applyModel2Raster(model, raster, tiles, validation_tiles_dir, truth_by_sourc
         polygons.extend(mapped)
         scores.extend(mapped_scores)
 
-    keep = performNMS(polygons, scores, nms_iou_thresh)
+    keep = performNMS(polygons, scores, nms_iou_thresh) # TODO: NMS and merge?
     predicted = [polygons[i] for i in keep]
     ground_truth = truth_by_source.get(raster, [])
     recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)

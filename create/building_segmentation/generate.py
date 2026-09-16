@@ -3,9 +3,9 @@ import torch
 from pathlib import Path
 from device import getDevice
 
-from train.yolo.common import trainYOLOModel, validateYOLOModel
+from train.yolo.utils import trainYOLOModel, validateYOLOModel
 from tiling import generateTiles, generateDataYAML, loadGroundTruthBySource
-from finetune.common import finetuneMaskRCNN, validateMaskRCNNModel, buildModel
+from finetune.utils import finetuneMaskRCNN, validateMaskRCNNModel, buildModel
 from config import (
     getFinalModelConfig,
     SEED,

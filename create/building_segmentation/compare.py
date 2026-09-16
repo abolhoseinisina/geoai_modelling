@@ -12,12 +12,11 @@ from dataclasses import dataclass
 from shapely.geometry import Polygon
 
 from device import getDevice
+from train.yolo.utils import validateYOLOModel
 from nms import performNMS, georeferencePolygon
-from train.yolo.common import validateYOLOModel
-from finetune.common import validateMaskRCNNModel
-from finetune.common import convertMask2Polygonpx
 from accuracy import getPrecisionRecall, getIoUDice
 from tiling import generateTiles, loadGroundTruthBySource
+from finetune.utils import validateMaskRCNNModel, convertMask2Polygonpx
 from config import getFinalModelConfig, SEED, VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE
 
 IOU_THRESH = 0.5
