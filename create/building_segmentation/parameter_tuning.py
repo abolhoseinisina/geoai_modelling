@@ -150,28 +150,29 @@ def main():
             validation_tile_index = generateTiles(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE, tile_size, overlap, gsd_m=config['gsd_minimum'], seed=SEED)
             for model_type in MODEL_TYPES:
                 model = train(model_type, config[model_type], training_tile_index, TRAINING_TILES_DIR, training_data_file, tile_size, OUTPUT_MODELS_DIR)
+                for nms_iou_threshold in IOU_THRESHS:
+                    t0 = time.time()
+                    model_performance = validate(model_type, model, config[model_type], VALIDATING_TILES_DIR, validation_tile_index, tile_size, truth_by_source, nms_iou_threshold, config['accuracy_iou_threshold'])
+                    duration = time.time() - t0
 
-                t0 = time.time()
-                model_performance = validate(model_type, model, config[model_type], VALIDATING_TILES_DIR, validation_tile_index, tile_size, truth_by_source, config['nms_iou_threshold'], config['accuracy_iou_threshold'])
-                duration = time.time() - t0
-
-                for validation_row in model_performance:
-                    results.append({
-                        'tile_size': tile_size, 
-                        'overlap': overlap, 
-                        'model': model_type, 
-                        'validation_duration_sec': round(duration, 2),
-                        'source': validation_row['source'], 
-                        'actual': int(validation_row['actual']), 
-                        'predicted': int(validation_row['predicted']), 
-                        'precision': round(validation_row['precision'], 4), 
-                        'recall': round(validation_row['recall'], 4), 
-                        'iou': round(validation_row['iou'], 4), 
-                        'dice': round(validation_row['dice'], 4)
-                    })
-               
-                results_df = pd.DataFrame(results)
-                results_df.to_csv('output/parameter_tuning/parameter_tuning.csv')
+                    for validation_row in model_performance:
+                        results.append({
+                            'tile_size': tile_size, 
+                            'overlap': overlap, 
+                            'model': model_type,
+                            'nms_iou_threshold': nms_iou_threshold, 
+                            'validation_duration_sec': round(duration, 2),
+                            'source': validation_row['source'], 
+                            'actual': int(validation_row['actual']), 
+                            'predicted': int(validation_row['predicted']), 
+                            'precision': round(validation_row['precision'], 4), 
+                            'recall': round(validation_row['recall'], 4), 
+                            'iou': round(validation_row['iou'], 4), 
+                            'dice': round(validation_row['dice'], 4)
+                        })
+                
+                    results_df = pd.DataFrame(results)
+                    results_df.to_csv('output/parameter_tuning/parameter_tuning.csv')
     
     drawComparisonChart('output/parameter_tuning/parameter_tuning.csv')
 
