@@ -70,7 +70,7 @@ def plotHeatmapPerModelEnv(results, column_names: list[str], title: str):
         ax.set_xticks(np.arange(len(envs)))
         ax.set_yticks(np.arange(len(models)))
         ax.set_xticklabels(envs)
-        ax.set_yticklabels(models if idx == 1 else [""]*len(models))
+        ax.set_yticklabels(models)
         ax.set_xlabel('Environment')
         if idx == 0:
             ax.set_ylabel('Model')
@@ -121,46 +121,50 @@ def polygonsFromMask(mask: np.ndarray, min_area_px: float = 16) -> list[Polygon]
         polygons.append(Polygon([(float(x), float(y)) for x, y in approx.reshape(-1, 2)]))
     return polygons
 
+def applyMaskRCNNOnnx2Tiles(session, validation_tiles_dir, tiles, score_threshold, nms_iou_thresh, input_name, mask_threshold):
+    polygons: list[Polygon] = []
+    scores: list[float] = []
+    for _, tile in tiles.iterrows():
+        image_path = validation_tiles_dir / tile['image']
+        rgb = np.array(Image.open(image_path).convert("RGB"))
+        image = rgb.astype(np.float32) / 255.0   # (H, W, C)
+        image = np.transpose(image, (2, 0, 1))   # (C, H, W)
+        boxes, _labels, det_scores, masks = session.run(None, {input_name: image})
+        
+        if len(det_scores) == 0:
+            continue
+
+        for mask, score, box in zip(masks, det_scores, boxes):
+            if score < score_threshold:
+                continue
+        
+            mask_2d = mask[0] if mask.ndim == 3 else mask
+            binary = mask_2d > mask_threshold
+            x1, y1, x2, y2 = [int(v) for v in box]
+            cropped = np.zeros_like(binary, dtype=np.uint8)
+            y1c, y2c = max(y1, 0), min(y2, binary.shape[0])
+            x1c, x2c = max(x1, 0), min(x2, binary.shape[1])
+            cropped[y1c:y2c, x1c:x2c] = binary[y1c:y2c, x1c:x2c]
+            ring = convertMask2Polygonpx(cropped)
+            if ring is None:
+                continue
+            
+            poly_map = georeferencePolygon(Polygon(ring), tile['transform'])
+            if poly_map is not None:
+                polygons.append(poly_map)
+                scores.append(float(score))
+
+    keep = performNMS(polygons, scores, nms_iou_thresh)
+    predicted = [polygons[i] for i in keep]
+    return predicted
+
 def validateMaskRCNNOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
     mask_threshold = 0.5
     input_name = session.get_inputs()[0].name
     validation_df = pd.DataFrame(validation_tile_index)
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate MASK-RCNN-ONNX', ncols=100):
-        polygons: list[Polygon] = []
-        scores: list[float] = []
-        for _, tile in tiles.iterrows():
-            image_path = validation_tiles_dir / tile['image']
-            rgb = np.array(Image.open(image_path).convert("RGB"))
-            image = rgb.astype(np.float32) / 255.0   # (H, W, C)
-            image = np.transpose(image, (2, 0, 1))   # (C, H, W)
-            boxes, _labels, det_scores, masks = session.run(None, {input_name: image})
-            
-            if len(det_scores) == 0:
-                continue
-   
-            for mask, score, box in zip(masks, det_scores, boxes):
-                if score < score_threshold:
-                    continue
-            
-                mask_2d = mask[0] if mask.ndim == 3 else mask
-                binary = mask_2d > mask_threshold
-                x1, y1, x2, y2 = [int(v) for v in box]
-                cropped = np.zeros_like(binary, dtype=np.uint8)
-                y1c, y2c = max(y1, 0), min(y2, binary.shape[0])
-                x1c, x2c = max(x1, 0), min(x2, binary.shape[1])
-                cropped[y1c:y2c, x1c:x2c] = binary[y1c:y2c, x1c:x2c]
-                ring = convertMask2Polygonpx(cropped)
-                if ring is None:
-                    continue
-                
-                poly_map = georeferencePolygon(Polygon(ring), tile['transform'])
-                if poly_map is not None:
-                    polygons.append(poly_map)
-                    scores.append(float(score))
-
-        keep = performNMS(polygons, scores, nms_iou_thresh)
-        predicted = [polygons[i] for i in keep]
+        predicted = applyMaskRCNNOnnx2Tiles(session, validation_tiles_dir, tiles, score_threshold, nms_iou_thresh, input_name, mask_threshold)
         ground_truth = truth_by_source.get(raster, [])
         recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
         iou, dice = getIoUDice(predicted, ground_truth)
@@ -197,6 +201,33 @@ def buildingProbability(raw: np.ndarray) -> np.ndarray:
 
     return pred
 
+def applyXunetOnnx2Tiles(session, validation_tiles_dir, tiles, nms_iou_thresh, input_name, seg_thresh, min_segment_px, peak):
+    polygons: list[Polygon] = []
+    scores: list[float] = []
+    for _, tile in tiles.iterrows():
+        image_path = validation_tiles_dir / tile['image']
+        rgb = np.array(Image.open(image_path).convert("RGB"))  # shape (H, W, C)
+        image = rgb.astype(np.float32) / 255.0  # normalize to 0-1, shape (H, W, C)
+        if image.shape[-1] == 3:  # channel last
+            image = np.transpose(image, (2, 0, 1))  # make it (C, H, W)
+        
+        image = image[None, ...]  # add batch dimension (1, C, H, W)
+        pred = buildingProbability(session.run(None, {input_name: image})[0])
+        peak = max(peak, float(pred.max()))
+        binary = (pred > seg_thresh).astype(np.uint8)
+        if not binary.any():
+            continue
+        
+        for poly_px in polygonsFromMask(binary, min_segment_px):
+            poly_map = georeferencePolygon(poly_px, tile['transform'])
+            if poly_map is not None:
+                polygons.append(poly_map)
+                scores.append(1.0)
+
+    keep = performNMS(polygons, scores, nms_iou_thresh)
+    predicted = [polygons[i] for i in keep]
+    return predicted
+
 def validateXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, gsd_m: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float) -> gpd.GeoDataFrame:
     peak = 0.0
     seg_thresh = 0.5
@@ -207,30 +238,7 @@ def validateXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index
     validation_df = pd.DataFrame(validation_tile_index)
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate MASK-RCNN-ONNX', ncols=100):
-        polygons: list[Polygon] = []
-        scores: list[float] = []
-        for _, tile in tiles.iterrows():
-            image_path = validation_tiles_dir / tile['image']
-            rgb = np.array(Image.open(image_path).convert("RGB"))  # shape (H, W, C)
-            image = rgb.astype(np.float32) / 255.0  # normalize to 0-1, shape (H, W, C)
-            if image.shape[-1] == 3:  # channel last
-                image = np.transpose(image, (2, 0, 1))  # make it (C, H, W)
-            
-            image = image[None, ...]  # add batch dimension (1, C, H, W)
-            pred = buildingProbability(session.run(None, {input_name: image})[0])
-            peak = max(peak, float(pred.max()))
-            binary = (pred > seg_thresh).astype(np.uint8)
-            if not binary.any():
-                continue
-            
-            for poly_px in polygonsFromMask(binary, min_segment_px):
-                poly_map = georeferencePolygon(poly_px, tile['transform'])
-                if poly_map is not None:
-                    polygons.append(poly_map)
-                    scores.append(1.0)
-
-        keep = performNMS(polygons, scores, nms_iou_thresh)
-        predicted = [polygons[i] for i in keep]
+        predicted = applyXunetOnnx2Tiles(session, validation_tiles_dir, tiles, nms_iou_thresh, input_name, seg_thresh, min_segment_px, peak)
         ground_truth = truth_by_source.get(raster, [])
         recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
         iou, dice = getIoUDice(predicted, ground_truth)
