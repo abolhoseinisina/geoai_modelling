@@ -126,7 +126,7 @@ def polygonsFromMask(mask: np.ndarray, min_area_px: float = 16) -> list[Polygon]
         polygons.append(Polygon([(float(x), float(y)) for x, y in approx.reshape(-1, 2)]))
     return polygons
 
-def applyMaskRCNNOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
+def validateMaskRCNNOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
     mask_threshold = 0.5
     input_name = session.get_inputs()[0].name
     validation_df = pd.DataFrame(validation_tile_index)
@@ -202,7 +202,7 @@ def buildingProbability(raw: np.ndarray) -> np.ndarray:
 
     return pred
 
-def applyXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, gsd_m: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float) -> gpd.GeoDataFrame:
+def validateXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, gsd_m: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float) -> gpd.GeoDataFrame:
     peak = 0.0
     seg_thresh = 0.5
     min_segment_px = 11
@@ -253,17 +253,17 @@ def applyXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index: d
     
     return results
 
-def runModel(model_spec: ModelSpec, validation_tile_dir: str, validation_tile_index: dict, truth_by_source, device, nms_iou_threshold, accuracy_iou_threshold):
+def validate(model_spec: ModelSpec, validation_tile_dir: str, validation_tile_index: dict, truth_by_source, device, nms_iou_threshold, accuracy_iou_threshold):
     if model_spec.model_type == "MASK-RCNN":
         return validateMaskRCNNModel(model_spec.path, validation_tile_dir, validation_tile_index, device, 0.5, model_spec.tile_size, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
     elif model_spec.model_type == "MASK-RCNN-ONNX":
         session = ortSession(model_spec.path)
-        return applyMaskRCNNOnnx(session, validation_tile_dir, validation_tile_index, model_spec.tile_size, 0.5, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
+        return validateMaskRCNNOnnx(session, validation_tile_dir, validation_tile_index, model_spec.tile_size, 0.5, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
     elif model_spec.model_type == "XUNET-ONNX":
         session = ortSession(model_spec.path)
-        return applyXunetOnnx(session, validation_tile_dir, validation_tile_index, model_spec.tile_size, model_spec.gsd_m, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
+        return validateXunetOnnx(session, validation_tile_dir, validation_tile_index, model_spec.tile_size, model_spec.gsd_m, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
     
     elif model_spec.model_type == "YOLO-ONNX":
         model = YOLO(model_spec.path, task='segment', verbose=False)
@@ -294,7 +294,7 @@ def execute() -> None:
     results = []
     for model_spec in available_models:
         validation_tile_index = generateTiles(VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE, model_spec.tile_size, model_spec.overlap, gsd_m=model_spec.gsd_m, seed=SEED)
-        model_results = runModel(model_spec, VALIDATING_TILES_DIR, validation_tile_index, truth_by_source, device, config['nms_iou_threshold'], config['accuracy_iou_threshold'])
+        model_results = validate(model_spec, VALIDATING_TILES_DIR, validation_tile_index, truth_by_source, device, config['nms_iou_threshold'], config['accuracy_iou_threshold'])
         for row in model_results:
             row['model'] = model_spec.name
             results.append(row)
