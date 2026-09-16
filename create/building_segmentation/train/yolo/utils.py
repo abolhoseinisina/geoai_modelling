@@ -6,8 +6,8 @@ from pathlib import Path
 from ultralytics import YOLO
 from shapely.geometry import Polygon
 
-from nms import georeferencePolygons, performNMS
 from accuracy import getIoUDice, getPrecisionRecall
+from nms import georeferencePolygons, performNMS, mergeOverlappingPredictions
 
 def apply2Tiles(model, validation_tiles_dir, tiles, tile_size, score_threshold, nms_iou_thresh):
     polygons: list[Polygon] = []
@@ -32,7 +32,7 @@ def apply2Tiles(model, validation_tiles_dir, tiles, tile_size, score_threshold, 
         scores.extend(mapped_scores)
 
     keep = performNMS(polygons, scores, nms_iou_thresh)
-    predicted = [polygons[i] for i in keep]
+    predicted = mergeOverlappingPredictions([polygons[i] for i in keep])
     return predicted
 
 def trainYOLOModel(yolo_base_model, data_yaml: Path, device, epochs: int, tile_size: int, batch_size: int, workers: int, patience: int, output_dir: Path):

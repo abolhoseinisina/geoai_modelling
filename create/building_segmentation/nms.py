@@ -1,3 +1,4 @@
+from shapely.ops import unary_union
 from shapely.strtree import STRtree
 from shapely.geometry import Polygon
 from rasterio.transform import Affine
@@ -10,6 +11,44 @@ def convertPixelToPolygon(poly: Polygon, transform) -> Polygon:
         transform = Affine(*list(transform)[:6])
         
     return Polygon([transform * (px, py) for px, py in poly.exterior.coords])
+
+def repairPolygon(poly):
+    if poly is None or poly.is_empty:
+        return None
+
+    if not poly.is_valid:
+        poly = make_valid(poly)
+
+    if poly.geom_type == "MultiPolygon":
+        poly = max(poly.geoms, key=lambda part: part.area)
+
+    if poly.geom_type != "Polygon" or poly.is_empty:
+        return None
+
+    return poly
+
+def mergeOverlappingPredictions(polygons: list[Polygon]) -> list[Polygon]:
+    cleaned = [poly for poly in (repairPolygon(poly) for poly in polygons) if poly is not None]
+    if not cleaned:
+        return []
+
+    merged = unary_union(cleaned)
+    if merged.is_empty:
+        return []
+    if merged.geom_type == "Polygon":
+        parts = [merged]
+    elif merged.geom_type == "MultiPolygon":
+        parts = list(merged.geoms)
+    else:
+        parts = list(getattr(merged, "geoms", []))
+
+    out = []
+    for part in parts:
+        repaired = repairPolygon(part)
+        if repaired is not None:
+            out.append(repaired)
+    
+    return out
 
 def performNMS(polygons: list[Polygon], scores: list[float], iou_thresh: float) -> list[int]:
     if not polygons:
@@ -38,17 +77,7 @@ def performNMS(polygons: list[Polygon], scores: list[float], iou_thresh: float) 
     return kept
 
 def georeferencePolygon(poly: Polygon, transform):
-    poly_map = convertPixelToPolygon(poly, transform)
-    if not poly_map.is_valid:
-        poly_map = make_valid(poly_map)
-    
-    if poly_map.geom_type == "MultiPolygon":
-        poly_map = max(poly_map.geoms, key=lambda g: g.area)
-    
-    if poly_map.geom_type != "Polygon" or poly_map.is_empty:
-        return None
-
-    return poly_map
+    return repairPolygon(convertPixelToPolygon(poly, transform))
 
 def georeferencePolygons(pixel_polys: list[Polygon], scores: list[float], transform) -> tuple[list[Polygon], list[float]]:
     mapped: list[Polygon] = []

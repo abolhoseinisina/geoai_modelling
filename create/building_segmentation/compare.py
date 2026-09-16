@@ -13,10 +13,10 @@ from shapely.geometry import Polygon
 
 from device import getDevice
 from train.yolo.utils import validateYOLOModel
-from nms import performNMS, georeferencePolygon
 from accuracy import getPrecisionRecall, getIoUDice
 from tiling import generateTiles, loadGroundTruthBySource
 from finetune.utils import validateMaskRCNNModel, convertMask2Polygonpx
+from nms import performNMS, georeferencePolygon, mergeOverlappingPredictions
 from config import getFinalModelConfig, SEED, VALIDATING_IMAGES_DIR, VALIDATING_DETECTION_FILE, VALIDATING_TILES_DIR, VALIDATING_TILE_INDEX_FILE
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def applyMaskRCNNOnnx2Tiles(session, validation_tiles_dir, tiles, score_threshol
                 scores.append(float(score))
 
     keep = performNMS(polygons, scores, nms_iou_thresh)
-    predicted = [polygons[i] for i in keep]
+    predicted = mergeOverlappingPredictions([polygons[i] for i in keep])
     return predicted
 
 def validateMaskRCNNOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
@@ -225,7 +225,7 @@ def applyXunetOnnx2Tiles(session, validation_tiles_dir, tiles, nms_iou_thresh, i
                 scores.append(1.0)
 
     keep = performNMS(polygons, scores, nms_iou_thresh)
-    predicted = [polygons[i] for i in keep]
+    predicted = mergeOverlappingPredictions([polygons[i] for i in keep])
     return predicted
 
 def validateXunetOnnx(session, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, gsd_m: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float) -> gpd.GeoDataFrame:

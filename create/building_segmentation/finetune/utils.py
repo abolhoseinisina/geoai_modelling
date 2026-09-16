@@ -13,9 +13,9 @@ from shapely.geometry import Polygon
 from torch.utils.data import DataLoader
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 
-from nms import georeferencePolygons, performNMS
 from accuracy import getIoUDice, getPrecisionRecall
 from finetune.BuildingTileDataset import BuildingTileDataset
+from nms import georeferencePolygons, performNMS, mergeOverlappingPredictions
 
 MOMENTUM = 0.9
 WEIGHT_DECAY = 5e-4
@@ -215,8 +215,8 @@ def apply2Tiles(model, validation_tiles_dir, tiles, device, score_threshold, nms
         polygons.extend(mapped)
         scores.extend(mapped_scores)
 
-    keep = performNMS(polygons, scores, nms_iou_thresh) # TODO: NMS and merge?
-    predicted = [polygons[i] for i in keep]
+    keep = performNMS(polygons, scores, nms_iou_thresh)
+    predicted = mergeOverlappingPredictions([polygons[i] for i in keep])
     return predicted
 
 def validateMaskRCNNModel(model_path, validation_tiles_dir, validation_tile_index, device, score_threshold, tile_size: int, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
