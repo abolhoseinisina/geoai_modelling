@@ -9,6 +9,32 @@ from shapely.geometry import Polygon
 from nms import georeferencePolygons, performNMS
 from accuracy import getIoUDice, getPrecisionRecall
 
+def apply2Tiles(model, validation_tiles_dir, tiles, tile_size, score_threshold, nms_iou_thresh):
+    polygons: list[Polygon] = []
+    scores: list[float] = []
+    for _, tile in tiles.iterrows():
+        image_path = validation_tiles_dir / tile['image']
+        rgb = np.array(Image.open(image_path).convert("RGB"))
+        bgr = rgb[:, :, ::-1]
+        result = model.predict(bgr, imgsz=tile_size, conf=0.01, verbose=False)[0]
+        pixel_polys = []
+        pixel_scores = []
+        if result.masks is not None and result.boxes is not None:
+            for xy, score in zip(result.masks.xy, result.boxes.conf.cpu().numpy()):
+                if float(score) < score_threshold or len(xy) < 3:
+                    continue
+                
+                pixel_polys.append(Polygon(xy))
+                pixel_scores.append(float(score))
+
+        mapped, mapped_scores = georeferencePolygons(pixel_polys, pixel_scores, tile['transform'])
+        polygons.extend(mapped)
+        scores.extend(mapped_scores)
+
+    keep = performNMS(polygons, scores, nms_iou_thresh)
+    predicted = [polygons[i] for i in keep]
+    return predicted
+
 def trainYOLOModel(yolo_base_model, data_yaml: Path, device, epochs: int, tile_size: int, batch_size: int, workers: int, patience: int, output_dir: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
     model = YOLO(yolo_base_model)
@@ -20,28 +46,7 @@ def validateYOLOModel(model: YOLO, validation_tiles_dir: Path, validation_tile_i
     
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate YOLO', ncols=100):
-        polygons: list[Polygon] = []
-        scores: list[float] = []
-        for _, tile in tiles.iterrows():
-            image_path = validation_tiles_dir / tile['image']
-            rgb = np.array(Image.open(image_path).convert("RGB"))
-            bgr = rgb[:, :, ::-1]
-            result = model.predict(bgr, imgsz=tile_size, conf=0.01, verbose=False)[0]
-            pixel_polys = []
-            pixel_scores = []
-            if result.masks is not None and result.boxes is not None:
-                for xy, score in zip(result.masks.xy, result.boxes.conf.cpu().numpy()):
-                    if float(score) < score_threshold or len(xy) < 3:
-                        continue
-                    pixel_polys.append(Polygon(xy))
-                    pixel_scores.append(float(score))
-
-            mapped, mapped_scores = georeferencePolygons(pixel_polys, pixel_scores, tile['transform'])
-            polygons.extend(mapped)
-            scores.extend(mapped_scores)
-
-        keep = performNMS(polygons, scores, nms_iou_thresh)
-        predicted = [polygons[i] for i in keep]
+        predicted = apply2Tiles(model, validation_tiles_dir, tiles, tile_size, score_threshold, nms_iou_thresh)
         ground_truth = truth_by_source.get(raster, [])
         recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
         iou, dice = getIoUDice(predicted, ground_truth)
