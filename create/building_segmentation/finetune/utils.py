@@ -194,7 +194,7 @@ def finetuneMaskRCNN(pretrained_model_path: str, tile_index: list[dict], tiles_d
     model.load_state_dict(torch.load(output_model_path, map_location=device, weights_only=True))
     return output_model_path
 
-def apply2Tiles(model, tiles, validation_tiles_dir, device, score_threshold, nms_iou_thresh):
+def apply2Tiles(model, validation_tiles_dir, tiles, device, score_threshold, nms_iou_thresh):
     polygons: list[Polygon] = []
     scores: list[float] = []
     for _, tile in tiles.iterrows():
@@ -226,7 +226,7 @@ def validateMaskRCNNModel(model_path, validation_tiles_dir, validation_tile_inde
     validation_df = pd.DataFrame(validation_tile_index)
     results = []
     for raster, tiles in tqdm(validation_df.groupby('source'), desc='Validate Finetune', ncols=100):
-        predicted = apply2Tiles(model, tiles, validation_tiles_dir, device, score_threshold, nms_iou_thresh)
+        predicted = apply2Tiles(model, validation_tiles_dir, tiles, device, score_threshold, nms_iou_thresh)
         ground_truth = truth_by_source.get(raster, [])
         recall, precision, true_positives, false_positives = getPrecisionRecall(predicted, ground_truth, accuracy_iou_thresh)
         iou, dice = getIoUDice(predicted, ground_truth)
