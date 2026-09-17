@@ -279,4 +279,3 @@ def generateMaskRCNNOnnx(weights_path: Path, tile_size: int, output_path: Path) 
 
     onnx.checker.check_model(onnx.load(str(output_path)))
     print(f"ONNX Export: {output_path.stem}.onnx (input 3x{tile_size}x{tile_size} float32 in [0, 1])")
-    return output_path
