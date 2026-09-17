@@ -60,12 +60,13 @@ def train(model_type, model_config, tile_index, tiles_dir, data_file, tile_size,
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
-def generateONNX(model_type, model, tile_size: int, output_dir: Path) -> Path:
+def generateONNX(model_type, model, config, output_dir: Path) -> Path:
+    device = getDevice(config[model_type].device)
     output_dir = Path(output_dir)
     if model_type == "MASK-RCNN":
         weights_path = Path(model)
         output_path = output_dir / "finetune" / f"{weights_path.stem}.onnx"
-        return generateMaskRCNNOnnx(weights_path, tile_size, output_path)
+        return generateMaskRCNNOnnx(weights_path, device, config['tile_size'], output_path)
 
     if model_type == "YOLO":
         raise SystemExit("YOLO ONNX export is not implemented in this pass.")
@@ -81,7 +82,7 @@ def main():
     model_type = config['model_type']
     model = train(model_type, config[model_type], training_tile_index, TRAINING_TILES_DIR, training_data_file, config['tile_size'], OUTPUT_MODELS_DIR)
     model_performance = validate(model_type, model, config[model_type], VALIDATING_TILES_DIR, validation_tile_index, config['tile_size'], truth_by_source, config['nms_iou_threshold'], config['accuracy_iou_threshold'])
-    generateONNX(model_type, model, config['tile_size'], OUTPUT_MODELS_DIR)
+    generateONNX(model_type, model, config, OUTPUT_MODELS_DIR)
 
 if __name__ == '__main__':
     main()
