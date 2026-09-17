@@ -52,6 +52,9 @@ def drawResults(validation_tiles_dir, predictions, ground_truth):
     prediction_handle = None
 
     for idx in range(total_plots):
+        if idx >= len(shown_models):
+            continue
+        
         ax = axs[idx]
         ax.imshow(img)
         ax.set_axis_off()
