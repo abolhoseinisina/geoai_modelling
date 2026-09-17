@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from device import getDevice
-from train.yolo.utils import trainYOLOModel, validateYOLOModel
 from tiling import generateTiles, generateDataYAML, loadGroundTruthBySource
+from train.yolo.utils import trainYOLOModel, validateYOLOModel, generateYOLOOnnx
 from finetune.utils import finetuneMaskRCNN, validateMaskRCNNModel, generateMaskRCNNOnnx
 from config import (
     getFinalModelConfig,
@@ -68,7 +68,9 @@ def generateONNX(model_type, model, config, output_dir: Path) -> Path:
         return generateMaskRCNNOnnx(weights_path, config['tile_size'], output_path)
 
     if model_type == "YOLO":
-        raise SystemExit("YOLO ONNX export is not implemented in this pass.")
+        weights_path = Path(model.ckpt_path)
+        output_path = output_dir / "train" / "weights" / f"{weights_path.stem}.onnx"
+        return generateYOLOOnnx(model, config["tile_size"], output_path)
 
     raise SystemExit('Error: Wrong "model_type" value.')
 

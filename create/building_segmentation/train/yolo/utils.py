@@ -1,3 +1,5 @@
+import onnx
+import shutil
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -40,6 +42,17 @@ def trainYOLOModel(yolo_base_model, data_yaml: Path, device, epochs: int, tile_s
     model = YOLO(yolo_base_model)
     model.train(data=str(data_yaml), epochs=epochs, imgsz=tile_size, batch=batch_size, device=device, workers=workers, patience=patience, project=str(output_dir), name="train", exist_ok=True, plots=True)
     return YOLO(str(output_dir / "train/weights/best.pt"))
+
+def generateYOLOOnnx(model: YOLO, tile_size: int, output_path: Path) -> Path:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    exported = Path(model.export(format="onnx", imgsz=tile_size, dynamic=False, simplify=True, nms=False, batch=1, device="cpu"))
+    if exported.resolve() != output_path.resolve():
+        shutil.copy2(exported, output_path)
+
+    onnx.checker.check_model(onnx.load(str(output_path)))
+    print(f"ONNX Export: {output_path.stem}.onnx (input 1x3x{tile_size}x{tile_size} float32 in [0, 1])")
 
 def validateYOLOModel(model: YOLO, validation_tiles_dir: Path, validation_tile_index: dict, tile_size: int, score_threshold: float, truth_by_source: dict[str, list[Polygon]], nms_iou_thresh: float, accuracy_iou_thresh: float):
     validation_df = pd.DataFrame(validation_tile_index)
