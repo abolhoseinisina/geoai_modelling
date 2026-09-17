@@ -87,3 +87,6 @@ That is the best **single** setting for residential and mixed when both “find 
 **If false positives are more costly than misses:** YOLO **640 / 64** (or 640 / 32). Higher precision, slightly higher F1, worse recall and worse Dice.
 
 Wide buildings need a different approach.
+
+This is the results of the models on a sample imagery:
+![Sample building footprint detection](output/models/example_Winnipeg_SU_2025_crop_3.jpg)
