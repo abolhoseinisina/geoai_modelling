@@ -1,11 +1,9 @@
-import onnx
-import torch
 from pathlib import Path
-from device import getDevice
 
+from device import getDevice
 from train.yolo.utils import trainYOLOModel, validateYOLOModel
 from tiling import generateTiles, generateDataYAML, loadGroundTruthBySource
-from finetune.utils import finetuneMaskRCNN, validateMaskRCNNModel, buildModel
+from finetune.utils import finetuneMaskRCNN, validateMaskRCNNModel, generateMaskRCNNOnnx
 from config import (
     getFinalModelConfig,
     SEED,
@@ -21,6 +19,10 @@ from config import (
     VALIDATING_TILES_DIR,
     VALIDATING_TILE_INDEX_FILE,
 )
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def validateYolo(model, validation_tiles_dir, validation_tile_index, tile_size, truth_by_source, nms_iou_threshold, accuracy_iou_threshold):
     return validateYOLOModel(model, validation_tiles_dir, validation_tile_index, tile_size, 0.5, truth_by_source, nms_iou_threshold, accuracy_iou_threshold)
@@ -58,21 +60,16 @@ def train(model_type, model_config, tile_index, tiles_dir, data_file, tile_size,
 
     raise SystemExit('Error: Wrong "model_type" value.')
 
-def generateONNX(model_type, model, format: str, tile_size: int, output_path: str):
-    if model_type == 'YOLO':
-        exported = model.export(format='onnx', imgsz=tile_size, opset=12, simplify=True, dynamic=False)
-        print(f"Model save as .onnx in {exported}")
+def generateONNX(model_type, model, tile_size: int, output_dir: Path) -> Path:
+    output_dir = Path(output_dir)
+    if model_type == "MASK-RCNN":
+        weights_path = Path(model)
+        output_path = output_dir / "finetune" / f"{weights_path.stem}.onnx"
+        return generateMaskRCNNOnnx(weights_path, tile_size, output_path)
 
-    elif model_type == 'MASK-RCNN':
-        buildModel()
-        dummy_input = [torch.rand(3, tile_size, tile_size)]
-        torch.onnx.export(model, (dummy_input,), str(output_path), dynamo=False, export_params=True, opset_version=17, do_constant_folding=True,
-                        input_names=["images"], output_names=["boxes", "labels", "scores", "masks"], 
-                        dynamic_axes={"images": {1: "height", 2: "width"}, "boxes": {0: "num_detections"}, "labels": {0: "num_detections"}, "scores": {0: "num_detections"}, "masks": {0: "num_detections"}})
+    if model_type == "YOLO":
+        raise SystemExit("YOLO ONNX export is not implemented in this pass.")
 
-        onnx.checker.check_model(onnx.load(str(output_path)))
-        print(f"Model save as .onnx in {output_path.name}")
-    
     raise SystemExit('Error: Wrong "model_type" value.')
 
 def main():
@@ -84,7 +81,7 @@ def main():
     model_type = config['model_type']
     model = train(model_type, config[model_type], training_tile_index, TRAINING_TILES_DIR, training_data_file, config['tile_size'], OUTPUT_MODELS_DIR)
     model_performance = validate(model_type, model, config[model_type], VALIDATING_TILES_DIR, validation_tile_index, config['tile_size'], truth_by_source, config['nms_iou_threshold'], config['accuracy_iou_threshold'])
-    generateONNX(model_type, model, 'onnx', config['tile_size'], OUTPUT_MODELS_DIR)
+    generateONNX(model_type, model, config['tile_size'], OUTPUT_MODELS_DIR)
 
 if __name__ == '__main__':
     main()

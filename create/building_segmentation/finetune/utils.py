@@ -1,5 +1,6 @@
 import cv2
 import math
+import onnx
 import torch
 import random
 import numpy as np
@@ -14,6 +15,7 @@ from torch.utils.data import DataLoader
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 
 from accuracy import getIoUDice, getPrecisionRecall
+from finetune.MaskRCNNOnnxWrapper import MaskRCNNOnnxWrapper
 from finetune.BuildingTileDataset import BuildingTileDataset
 from nms import georeferencePolygons, performNMS, mergeOverlappingPredictions
 
@@ -243,3 +245,37 @@ def validateMaskRCNNModel(model_path, validation_tiles_dir, validation_tile_inde
         })
     
     return results
+
+def generateMaskRCNNOnnx(weights_path: Path, tile_size: int, output_path: Path) -> Path:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    weights_path = Path(weights_path)
+    model = buildModel(weights_path=weights_path, num_classes=2, image_size=tile_size)
+    model.eval()
+    model.to("cpu")
+
+    wrapper = MaskRCNNOnnxWrapper(model)
+    dummy = torch.rand(3, tile_size, tile_size, dtype=torch.float32)
+    with torch.inference_mode():
+        torch.onnx.export(
+            wrapper,
+            dummy,
+            str(output_path),
+            dynamo=False,
+            export_params=True,
+            opset_version=17,
+            do_constant_folding=True,
+            input_names=["images"],
+            output_names=["boxes", "labels", "scores", "masks"],
+            dynamic_axes={
+                "boxes": {0: "num_detections"},
+                "labels": {0: "num_detections"},
+                "scores": {0: "num_detections"},
+                "masks": {0: "num_detections"},
+            },
+        )
+
+    onnx.checker.check_model(onnx.load(str(output_path)))
+    print(f"ONNX Export: {output_path.stem}.onnx (input 3x{tile_size}x{tile_size} float32 in [0, 1])")
+    return output_path
