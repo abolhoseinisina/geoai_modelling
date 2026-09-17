@@ -108,6 +108,43 @@ def plotHeatmapPerModelEnv(tuning_results, column_name: str, title: str):
     plt.savefig(f'output/parameter_tuning/{column_name}_per_model_per_env.jpg', dpi=300)
     plt.close()
 
+def plotHeatmapPerModelNMS(tuning_results, column_name: str, title: str):
+    nms_thresholds = sorted(tuning_results[column_name].unique())
+    models = sorted(tuning_results['model'].unique())
+
+    cmap = plt.get_cmap("YlGnBu")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6), sharey=True)
+    for idx, metric in enumerate(['f1', 'dice']):
+        data = tuning_results
+        heatmap_data = data.pivot_table(index='model', columns=column_name, values=metric, aggfunc='mean')
+        heatmap_data = heatmap_data.reindex(index=models, columns=nms_thresholds)
+        print(heatmap_data)
+        heatmap_values = heatmap_data.values
+        ax = axes[idx]
+        im = ax.imshow(heatmap_values, aspect="auto", cmap=cmap, vmin=np.nanmin(heatmap_values), vmax=np.nanmax(heatmap_values))
+        ax.set_xticks(np.arange(len(nms_thresholds)))
+        ax.set_yticks(np.arange(len(models)))
+        ax.set_xticklabels(nms_thresholds)
+        ax.set_yticklabels(models if idx == 1 else [""]*len(models))
+        ax.set_xlabel('NMS Threshold')
+        if idx == 0:
+            ax.set_ylabel('Model')
+        
+        for i in range(len(models)):
+            for j in range(len(nms_thresholds)):
+                val = heatmap_values[i, j]
+                text = f"{val:.2f}" if not np.isnan(val) else "NA"
+                ax.text(j, i, text, ha="center", va="center", color="black" if np.isnan(val) or val < (np.nanmax(heatmap_values) * 0.7) else "white", fontsize=10)
+        
+        ax.set_title(metric)
+        if idx == 1:
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label='Metric value')
+
+    plt.suptitle(f"{title} Heatmap")
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(f'output/parameter_tuning/{column_name}_per_model.jpg', dpi=300)
+    plt.close()
+
 def drawComparisonChart(file_path):
     envs = {
         'crop_0': 'mixed',
@@ -136,6 +173,7 @@ def drawComparisonChart(file_path):
     plotHeatmapPerModelEnv(tuning_results, 'f1', 'F1-Score')
     plotHeatmapPerModelEnv(tuning_results, 'dice', 'Dice')
     plotHeatmapPerModelEnv(tuning_results, 'validation_duration_sec', 'Inference Duration (sec)')
+    plotHeatmapPerModelNMS(tuning_results, 'nms_iou_threshold', 'NMS Threshold')
 
 def main():
     os.makedirs('output/parameter_tuning/', exist_ok=True)
