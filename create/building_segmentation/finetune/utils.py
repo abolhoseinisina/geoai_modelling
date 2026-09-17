@@ -246,17 +246,18 @@ def validateMaskRCNNModel(model_path, validation_tiles_dir, validation_tile_inde
     
     return results
 
-def generateMaskRCNNOnnx(weights_path: Path, device, tile_size: int, output_path: Path) -> Path:
+def generateMaskRCNNOnnx(weights_path: Path, tile_size: int, output_path: Path) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    export_device = torch.device('cpu')
     weights_path = Path(weights_path)
     model = buildModel(weights_path=weights_path, num_classes=2, image_size=tile_size)
     model.eval()
-    model.to(device)
+    model.to(export_device)
 
     wrapper = MaskRCNNOnnxWrapper(model)
-    dummy = torch.rand(3, tile_size, tile_size, dtype=torch.float32)
+    dummy = torch.rand(3, tile_size, tile_size, dtype=torch.float32, device=export_device)
     with torch.inference_mode():
         torch.onnx.export(
             wrapper,

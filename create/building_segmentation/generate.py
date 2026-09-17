@@ -61,12 +61,11 @@ def train(model_type, model_config, tile_index, tiles_dir, data_file, tile_size,
     raise SystemExit('Error: Wrong "model_type" value.')
 
 def generateONNX(model_type, model, config, output_dir: Path) -> Path:
-    device = getDevice(config[model_type].device)
     output_dir = Path(output_dir)
     if model_type == "MASK-RCNN":
         weights_path = Path(model)
         output_path = output_dir / "finetune" / f"{weights_path.stem}.onnx"
-        return generateMaskRCNNOnnx(weights_path, device, config['tile_size'], output_path)
+        return generateMaskRCNNOnnx(weights_path, config['tile_size'], output_path)
 
     if model_type == "YOLO":
         raise SystemExit("YOLO ONNX export is not implemented in this pass.")
