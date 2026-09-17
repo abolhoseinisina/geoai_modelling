@@ -106,7 +106,9 @@ def ortSession(path: Path):
     if "CUDAExecutionProvider" in available:
         providers.insert(0, "CUDAExecutionProvider")
 
-    return ort.InferenceSession(str(path), providers=providers)
+    options = ort.SessionOptions()
+    options.log_severity_level = 3
+    return ort.InferenceSession(str(path), sess_options=options, providers=providers)
 
 def polygonsFromMask(mask: np.ndarray, min_area_px: float = 16) -> list[Polygon]:
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
