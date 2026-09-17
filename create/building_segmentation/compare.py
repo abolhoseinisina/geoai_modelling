@@ -30,9 +30,9 @@ class ModelSpec:
 
 MODELS = [
     ModelSpec("MASK-RCNN", Path("../../models/building_footprints_usa.pth"), "MASK-RCNN", tile_size=640, overlap=64, gsd_m=0.25),
-    ModelSpec("FINE-TUNED MASK-RCNN", Path("output/models/finetune/finetuned_building_footprints_usa_1ep_20260911.pth"), "MASK-RCNN", tile_size=640, overlap=64, gsd_m=0.1),
-    ModelSpec("FINE-TUNED MASK-RCNN (ONNX)", Path("models/finetuned_building_footprints_usa.onnx"), "MASK-RCNN-ONNX", tile_size=640, overlap=64, gsd_m=0.1),
-    ModelSpec("YOLO", Path("output/models/train/weights/best.pt"), "YOLO", tile_size=640, overlap=64, gsd_m=0.1),
+    ModelSpec("FINE-TUNED MASK-RCNN", Path("output/models/finetune/finetuned_building_footprints_usa_24ep_20260916.pth"), "MASK-RCNN", tile_size=640, overlap=64, gsd_m=0.1),
+    ModelSpec("FINE-TUNED MASK-RCNN (ONNX)", Path("output/models/finetune/finetuned_building_footprints_usa_24ep_20260916.onnx"), "MASK-RCNN-ONNX", tile_size=640, overlap=64, gsd_m=0.1),
+    ModelSpec("YOLO", Path("output/models/train/weights/best_20260916.pt"), "YOLO", tile_size=640, overlap=64, gsd_m=0.1),
     ModelSpec("YOLO (ONNX)", Path("models/yolo_80ep.onnx"), "YOLO-ONNX", tile_size=512, overlap=64, gsd_m=0.1),
     ModelSpec("RAMP XUNET (ONNX)", Path("../../models/buildings_ramp_XUnet_256.onnx"), "XUNET-ONNX", tile_size=256, overlap=13, gsd_m=0.50),
 ]
